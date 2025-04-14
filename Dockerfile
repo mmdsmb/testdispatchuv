@@ -11,8 +11,10 @@ RUN pip install uv
 COPY pyproject.toml .
 
 # Install dependencies using uv
-# RUN uv pip install -e .
-RUN uv pip install --system .
+#RUN uv pip install -e .
+#RUN uv pip install --system .
+# Install dependencies using uv with --system
+RUN uv pip install --system -e .
 
 # Copy application code
 COPY . .
