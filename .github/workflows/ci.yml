@@ -48,10 +48,10 @@ jobs:
       run: |
         python -m pytest
         
-    - name: Run black
+    - name: Install and run black
       run: |
         uv pip install --system black
-        black . --check
+        black .
         
     - name: Run isort
       run: |

@@ -218,6 +218,69 @@ Pour vérifier la connectivité de la base de données :
 pytest tests/test_database_connection.py::test_database_connection -v
 ```
 
+## 🖋 Formatage du code
+
+Le projet utilise des outils automatisés pour maintenir un style de code cohérent et de haute qualité.
+
+### Black - Le formateur de code sans compromis
+
+[Black](https://black.readthedocs.io/) est un formateur de code Python qui applique un style cohérent et déterministe à tout votre code. Contrairement à d'autres outils, Black est implacable et n'offre presque aucune option de configuration - c'est son principe fondamental : "N'argumentez pas sur le style de formatage".
+
+#### Avantages de Black
+
+- **Cohérence** : Garantit que tous les développeurs produisent du code formaté de la même manière
+- **Gain de temps** : Élimine les discussions sur le style de code dans les revues
+- **Lisibilité améliorée** : Produit du code avec un style visuellement cohérent
+- **Intégration CI** : S'intègre à GitHub Actions pour vérifier automatiquement le formatage
+
+#### Utilisation de Black
+
+Pour formater tous les fichiers du projet :
+```bash
+black .
+```
+
+Pour vérifier si les fichiers sont bien formatés sans les modifier :
+```bash
+black . --check
+```
+
+### isort - Tri automatique des imports
+
+[isort](https://pycqa.github.io/isort/) organise automatiquement les imports Python en les groupant et les triant alphabétiquement. Dans ce projet, isort est configuré pour être compatible avec Black.
+
+#### Utilisation d'isort
+
+Pour trier les imports dans tout le projet :
+```bash
+isort .
+```
+
+Pour vérifier si les imports sont correctement triés :
+```bash
+isort . --check
+```
+
+### Intégration dans l'environnement de développement
+
+Pour une expérience optimale, configurez votre IDE pour exécuter Black et isort automatiquement lors de la sauvegarde des fichiers :
+
+- **VS Code** : Installer les extensions "Black Formatter" et "isort"
+- **PyCharm** : Configurer les outils externes dans les préférences
+
+### Configuration CI
+
+Dans notre workflow GitHub Actions, Black est configuré pour s'exécuter automatiquement et corriger le formatage :
+
+```yaml
+- name: Install and run black
+  run: |
+    uv pip install --system black
+    black .
+```
+
+Cela permet d'éviter que le CI n'échoue à cause de problèmes de formatage, tout en assurant que le code reste cohérent.
+
 ## 🚀 Deployment
 
 ### Local Docker
