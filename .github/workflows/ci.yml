@@ -42,7 +42,7 @@ jobs:
       
     - name: Install test dependencies
       run: |
-        uv pip install --system pytest pytest-mock psycopg psycopg-binary
+        uv pip install --system pytest pytest-mock psycopg psycopg-binary psycopg2-binary
         
     - name: Run tests
       run: |
