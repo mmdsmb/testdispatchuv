@@ -36,21 +36,24 @@ jobs:
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         
-    - name: Install dependencies
+    - name: Install project dependencies
       run: |
         uv pip install --system -e .
-        uv pip install pytest pytest-mock psycopg psycopg-binary
+      
+    - name: Install test dependencies
+      run: |
+        uv pip install --system pytest pytest-mock psycopg psycopg-binary
         
     - name: Run tests
       run: |
-        pytest
+        python -m pytest
         
     - name: Run black
       run: |
-        uv pip install black
+        uv pip install --system black
         black . --check
         
     - name: Run isort
       run: |
-        uv pip install isort
+        uv pip install --system isort
         isort . --check-only 
