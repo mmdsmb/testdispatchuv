@@ -248,7 +248,10 @@ git commit -m "Initial commit"
 
 3. Add remote and push:
 ```bash
-git remote add origin <your-repo-url>
+git config --global user.name "mmdsmb"
+git config --global user.email "mmdsmb@gmail.com"
+git remote add origin https://github.com/mmdsmb/testdispatchuv.git
+git remote set-url origin git@github.com:mmdsmb/testdispatchuv.git
 git push -u origin main
 ```
 
