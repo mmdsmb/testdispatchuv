@@ -26,6 +26,12 @@ class Settings(BaseSettings):
         # Si nous sommes en CI, utiliser psycopg2 qui est mieux supporté dans l'environnement CI
         scheme = "postgresql" if IN_CI else "postgresql+psycopg"
         
+        # Pour le CI, on reconstruit manuellement la chaîne de connexion
+        if IN_CI:
+            # Format manuel pour éviter les problèmes de chemin
+            return f"{scheme}://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_SERVER')}/{values.get('POSTGRES_DB')}"
+        
+        # Pour développement, on utilise le builder original
         return PostgresDsn.build(
             scheme=scheme,
             username=values.get("POSTGRES_USER"),

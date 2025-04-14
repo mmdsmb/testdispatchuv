@@ -18,7 +18,8 @@ IN_CI = os.environ.get("CI") == "true"
 def test_engine():
     # En CI, utiliser la config de test PostgreSQL du workflow
     if IN_CI:
-        TEST_SQLALCHEMY_DATABASE_URL = "postgresql+psycopg://test:test@localhost:5432/test_db"
+        # Format direct pour éviter le problème de chemin absolu avec /test_db
+        TEST_SQLALCHEMY_DATABASE_URL = "postgresql://test:test@localhost/test_db"
         engine = create_engine(TEST_SQLALCHEMY_DATABASE_URL)
     else:
         # En développement, utiliser Supabase
