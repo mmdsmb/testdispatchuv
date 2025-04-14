@@ -132,12 +132,12 @@ from app.core.config import settings
 engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
 ```
 
-#### Using psycopg2
+#### Using psycopg
 ```python
-import psycopg2
+import psycopg
 from app.core.config import settings
 
-conn = psycopg2.connect(
+conn = psycopg.connect(
     dbname=settings.POSTGRES_DB,
     user=settings.POSTGRES_USER,
     password=settings.POSTGRES_PASSWORD,
@@ -156,6 +156,67 @@ The test suite includes:
 - API endpoint tests
 - Database operation tests
 - Integration tests
+
+### Configuration de la base de données pour les tests
+
+Le projet est configuré pour fonctionner avec deux environnements de base de données différents :
+
+#### 1. Développement local avec Supabase
+
+En environnement de développement, les tests utilisent la configuration Supabase définie dans le fichier `.env`. Cela permet de tester contre votre base de données cloud sans nécessiter d'installation PostgreSQL locale.
+
+```
+POSTGRES_SERVER=db.zpjemgpnfaeayofvnkzo.supabase.co
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=************
+POSTGRES_DB=postgres
+SQLALCHEMY_DATABASE_URI=postgresql+psycopg://postgres:************@db.zpjemgpnfaeayofvnkzo.supabase.co:5432/postgres
+```
+
+#### 2. Intégration continue (CI) avec PostgreSQL local
+
+Dans l'environnement GitHub Actions CI, le système utilise automatiquement une base de données PostgreSQL locale définie dans le workflow :
+
+```yaml
+services:
+  postgres:
+    image: postgres:13
+    env:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test_db
+```
+
+#### Détection intelligente d'environnement
+
+Le système détecte automatiquement l'environnement d'exécution :
+
+```python
+# Détecter si on est dans un environnement CI (GitHub Actions)
+IN_CI = os.environ.get("CI") == "true"
+```
+
+#### Stratégies de test différentes
+
+- **En développement (Supabase)** : Les tables existent déjà. Les tests nettoient uniquement les données.
+- **En CI (PostgreSQL local)** : Les tables sont créées au début des tests et supprimées à la fin.
+
+#### Exécution des tests
+
+Pour exécuter les tests dans l'environnement actuel :
+```bash
+pytest
+```
+
+Pour exécuter un test spécifique uniquement :
+```bash
+pytest tests/test_database_connection.py -v
+```
+
+Pour vérifier la connectivité de la base de données :
+```bash
+pytest tests/test_database_connection.py::test_database_connection -v
+```
 
 ## 🚀 Deployment
 

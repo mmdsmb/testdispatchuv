@@ -39,7 +39,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system -e .
-        uv pip install pytest
+        uv pip install pytest pytest-mock psycopg psycopg-binary
         
     - name: Run tests
       run: |

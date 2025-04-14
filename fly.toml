@@ -7,19 +7,19 @@ app = 'testdispatch-ipxoa-uv'
 primary_region = 'cdg'
 
 [build]
-  dockerfile = "Dockerfile"
 
 [http_service]
-  internal_port = 8080 # L'application écoute sur le port 8080 à l'intérieur du conteneur.
+  internal_port = 8080 # L'application écoute sur le port 8080 à l’intérieur du conteneur.
   force_https = true # Forcer l'utilisation de HTTPS (redirige automatiquement HTTP vers HTTPS).
-  auto_stop_machines = true # Active l'arrêt automatique. Arrête automatiquement les machines inactives pour économiser des ressources.
+  auto_stop_machines = 'stop' # Active l'arrêt automatique . Arrête automatiquement les machines inactives pour économiser des ressources.
   stop_timeout = '10m'  # Temps avant l'arrêt : 10 minutes
   auto_start_machines = true # Redémarre automatiquement les machines lorsqu'une requête arrive.
-  min_machines_running = 0 # Autorise l'arrêt total des machines lorsqu'elles ne sont pas utilisées.
+  min_machines_running = 0 # Autorise l’arrêt total des machines lorsqu’elles ne sont pas utilisées. 0 = Toutes les machines peuvent être arrêtées , 1 = Toujours garder au moins 1 machine active
   processes = ['app'] # Définit les processus exécutés par l'application.
 
 [[vm]]
-  memory = '8gb' # 8 Go de RAM
-  cpu_kind = 'shared' # 'shared' : Utilisation de CPU partagé (moins cher, mais partagé avec d'autres)
-  cpus = 4 # La machine a 4 CPU
-  memory_mb = 8192  # memoire en mb
+  memory = '8gb' # memory = '2gb' / memory_mb = 2048 : La machine a 2 Go de RAM.
+  cpu_kind = 'shared' # 'shared' : Utilisation de CPU partagé (moins cher, mais partagé avec d’autres , 'performance' :CPU dédié
+  cpus = 4 # La machine a n CPU.
+  memory_mb = 8192  # memoire en mb  , 4096 , 2048 , 8192 
+>>>>>>> origin/main

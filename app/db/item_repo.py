@@ -1,15 +1,38 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, text, Column, Integer, String, DateTime
+from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
 
-# Create SQLAlchemy engine
-engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Create Base class for declarative models
+Base = declarative_base()
+
+# Define the Item model
+class Item(Base):
+    __tablename__ = "items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+# Initialisation paresseuse du moteur SQLAlchemy
+_engine = None
+_SessionLocal = None
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
+    return _engine
+
+def get_session_local():
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
+    return _SessionLocal
 
 def get_db():
-    db = SessionLocal()
+    db = get_session_local()()
     try:
         yield db
     finally:
@@ -19,7 +42,7 @@ def upsert_item_with_sqlalchemy(item_id: int, name: str) -> dict:
     """
     Upsert an item using SQLAlchemy.
     """
-    db = SessionLocal()
+    db = get_session_local()()
     try:
         # Using raw SQL for UPSERT
         query = text("""
@@ -40,18 +63,28 @@ def upsert_item_with_sqlalchemy(item_id: int, name: str) -> dict:
         ).fetchone()
         
         db.commit()
-        return dict(result)
+        
+        # Traiter le résultat de manière sécurisée
+        if result is None:
+            return {"id": item_id, "name": name, "updated_at": datetime.utcnow()}
+        
+        # Convertir en dictionnaire de manière compatible avec psycopg v3
+        return {
+            "id": result[0] if len(result) > 0 else item_id,
+            "name": result[1] if len(result) > 1 else name,
+            "updated_at": result[2] if len(result) > 2 else datetime.utcnow()
+        }
     finally:
         db.close()
 
-def upsert_item_with_psycopg2(item_id: int, name: str) -> dict:
+def upsert_item_with_psycopg(item_id: int, name: str) -> dict:
     """
-    Upsert an item using psycopg2.
+    Upsert an item using psycopg.
     """
-    import psycopg2
+    import psycopg
     from app.core.config import settings
     
-    conn = psycopg2.connect(
+    conn = psycopg.connect(
         dbname=settings.POSTGRES_DB,
         user=settings.POSTGRES_USER,
         password=settings.POSTGRES_PASSWORD,
