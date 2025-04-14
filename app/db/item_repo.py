@@ -1,8 +1,9 @@
+import os
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import create_engine, text, Column, Integer, String, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
-from app.core.config import settings
+from app.core.config import settings, IN_CI
 
 # Create Base class for declarative models
 Base = declarative_base()
@@ -23,6 +24,11 @@ def get_engine():
     global _engine
     if _engine is None:
         _engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
+        
+        # En environnement CI, créer les tables au démarrage
+        if IN_CI:
+            Base.metadata.create_all(bind=_engine)
+            
     return _engine
 
 def get_session_local():
