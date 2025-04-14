@@ -53,7 +53,7 @@ jobs:
         uv pip install --system black
         black .
         
-    - name: Run isort
+    - name: Check imports with isort
       run: |
         uv pip install --system isort
-        isort . --check-only 
+        isort . --check
