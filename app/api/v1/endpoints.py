@@ -34,4 +34,4 @@ async def multiply_numbers(a: int = Query(..., description="First number"), b: i
     """
     Multiply two numbers together.
     """
-    return {"result": a * b} 
+    return {"result": a * b}

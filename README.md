@@ -247,39 +247,63 @@ black . --check
 
 ### isort - Tri automatique des imports
 
-[isort](https://pycqa.github.io/isort/) organise automatiquement les imports Python en les groupant et les triant alphabétiquement. Dans ce projet, isort est configuré pour être compatible avec Black.
+[isort](https://pycqa.github.io/isort/) est un outil qui organise automatiquement les imports Python selon des règles précises :
 
-#### Utilisation d'isort
+1. **Groupement des imports** par type :
+   - Imports de la bibliothèque standard Python (comme `os`, `sys`)
+   - Imports tiers (comme `fastapi`, `sqlalchemy`)
+   - Imports locaux (vos propres modules)
 
-Pour trier les imports dans tout le projet :
-```bash
-isort .
-```
+2. **Tri alphabétique** dans chaque groupe
+   ```python
+   # Bibliothèque standard
+   import os
+   import sys
+   
+   # Packages tiers
+   from fastapi import FastAPI
+   import sqlalchemy
+   
+   # Modules locaux
+   from app.core import config
+   from app.db import models
+   ```
 
-Pour vérifier si les imports sont correctement triés :
-```bash
-isort . --check
-```
+#### Pourquoi c'est important ?
 
-### Intégration dans l'environnement de développement
+- **Lisibilité** : Organisation cohérente des imports dans tous les fichiers
+- **Maintenabilité** : Facilite la détection des dépendances inutiles ou manquantes
+- **Collaboration** : Standard commun pour toute l'équipe
+- **Prévention des conflits** : Évite les conflits de merge liés à l'ordre des imports
 
-Pour une expérience optimale, configurez votre IDE pour exécuter Black et isort automatiquement lors de la sauvegarde des fichiers :
+#### Configuration dans notre CI
 
-- **VS Code** : Installer les extensions "Black Formatter" et "isort"
-- **PyCharm** : Configurer les outils externes dans les préférences
-
-### Configuration CI
-
-Dans notre workflow GitHub Actions, Black est configuré pour s'exécuter automatiquement et corriger le formatage :
+Dans notre workflow GitHub Actions, isort s'exécute automatiquement :
 
 ```yaml
-- name: Install and run black
+- name: Install and run isort
   run: |
-    uv pip install --system black
-    black .
+    uv pip install --system isort
+    isort .
 ```
 
-Cela permet d'éviter que le CI n'échoue à cause de problèmes de formatage, tout en assurant que le code reste cohérent.
+#### Utilisation en développement
+
+Pour vérifier vos imports localement :
+```bash
+# Appliquer le tri
+isort .
+
+# Vérifier sans modifier
+isort . --check
+
+# Voir les changements proposés
+isort . --diff
+```
+
+#### Configuration avec Black
+
+isort est configuré pour être compatible avec Black, assurant une cohérence parfaite entre les deux outils de formatage.
 
 ## 🚀 Deployment
 
