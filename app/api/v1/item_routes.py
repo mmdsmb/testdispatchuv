@@ -6,6 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 import traceback
 from datetime import datetime
+import psycopg
+import os
 
 router = APIRouter(
     prefix="/items",
@@ -627,4 +629,33 @@ async def connection_status():
         "python_id_repo_engine": id(_engine) if _engine else None,
         "python_version": sys.version
     }
+
+@router.get("/supabase-test", tags=["system"], summary="Vérifier l'état actuel de la connexion")
+def test_supabase_connection():
+    """
+    Endpoint pour tester la connexion à Supabase.
+    Retourne la version de PostgreSQL ou une erreur.
+
+    """
+
+    #print(os.getenv("POSTGRES_PASSWORD"))   
+    print(os.getenv("SUPABASE_HOST"))
+
+    try:
+        conn = psycopg.connect(
+            host='aws-0-eu-west-3.pooler.supabase.com',
+            port=5432,# 5432 , 6543 
+            dbname="postgres",
+            user="postgres.zpjemgpnfaeayofvnkzo",
+            password=os.getenv("POSTGRES_PASSWORD"),
+            sslmode="require"
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT version()")
+            version = cur.fetchone()
+        conn.close()
+        return {"status": "success", "db_version": version}
+    except Exception as e:
+        return {"status": "error", "status_code": 500, "message": str(e)}
+        #raise HTTPException(status_code=500, detail=str(e))
 

@@ -323,7 +323,9 @@ source ~/.zshrc
 
 ```bash
 docker build -t fastapi-app .
-docker run -p 8000:8000 fastapi-app
+
+docker run --env-file .env -p 8080:8080 fastapi-app
+#docker run -p 8080:8080 fastapi-app
 ```
 
 ### Fly.io Deployment
