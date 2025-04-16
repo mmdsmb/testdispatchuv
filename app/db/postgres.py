@@ -14,15 +14,20 @@ class PostgresDataSource(DataSource):
     async def connect(self) -> None:
         """Établit une connexion asynchrone."""
         if not self.conn:
-            self.conn = await psycopg.AsyncConnection.connect(
-                host=settings.SUPABASE_POOLER_HOST,
-                port=settings.SUPABASE_POOLER_PORT,
-                dbname=settings.SUPABASE_POOLER_DBNAME,
-                user=settings.SUPABASE_POOLER_USER,
-                password=settings.SUPABASE_POOLER_PASSWORD,
-                sslmode=settings.SUPABASE_POOLER_SSLMODE,
-                autocommit=True
-            )
+            try:
+                self.conn = await psycopg.AsyncConnection.connect(
+                    host=settings.SUPABASE_POOLER_HOST,
+                    port=settings.SUPABASE_POOLER_PORT,
+                    dbname=settings.SUPABASE_POOLER_DBNAME,
+                    user=settings.SUPABASE_POOLER_USER,
+                    password=settings.SUPABASE_POOLER_PASSWORD,
+                    sslmode=settings.SUPABASE_POOLER_SSLMODE,
+                    autocommit=False  # Désactivé explicitement
+                )
+                logger.info("Connexion à la base de données établie avec succès")
+            except Exception as e:
+                logger.error(f"Échec de la connexion : {e}")
+                raise
 
     async def disconnect(self) -> None:
         """Ferme la connexion."""
@@ -31,35 +36,43 @@ class PostgresDataSource(DataSource):
             self.conn = None
 
     async def execute_query(self, query: str, params: Optional[List[Any]] = None) -> List[Any]:
-        """Exécute une requête et retourne les résultats si applicables."""
+        """Exécute une requête unique avec gestion de transaction."""
+        # Réutilise execute_transaction pour garantir la cohérence
+        return await self.execute_transaction([(query, params)])
+
+    async def execute_transaction(self, queries_with_params: List[tuple]) -> List[Any]:
+        """Exécute plusieurs requêtes dans une transaction atomique."""
         if not self.conn:
             await self.connect()
         
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(query, params or [])
-            
-            # Debug: Affiche l'état de la transaction
-            logger.info(f"État avant commit : {self.conn.info.transaction_status}")
-            
-            if cursor.description is None:
-                assert self.conn is not None  # Ajoutez ceci avant le commit
-                await self.conn.commit()
-                logger.info(f"État après commit : {self.conn.info.transaction_status}")
-                return []
-            
-            results = await cursor.fetchall()
-            if "RETURNING" not in query.upper():
-                assert self.conn is not None  # Ajoutez ceci avant le commit
-                await self.conn.commit()
-            return results
-
-    async def execute_transaction(self, queries: list):
-        """Exécute plusieurs requêtes dans une transaction."""
+        # Résultats de la dernière requête
+        final_results = []
+        
         try:
-            for query, params in queries:
-                await self.execute_query(query, params)
-        except Exception:
-            await self.conn.rollback()
+            # Début explicite de transaction
+            await self.conn.execute("BEGIN")
+            logger.info("Transaction démarrée")
+            
+            async with self.conn.cursor() as cursor:
+                for query, params in queries_with_params:
+                    # Gestion spéciale pour WITH et requêtes complexes
+                    logger.debug(f"Exécution dans transaction: {query}")
+                    await cursor.execute(query, params or [])
+                    
+                    # Capture des résultats si présents
+                    if cursor.description is not None:
+                        final_results = await cursor.fetchall()
+            
+            # Commit explicite à la fin de toutes les requêtes
+            await self.conn.execute("COMMIT")
+            logger.info("Transaction validée avec succès")
+            return final_results
+        
+        except Exception as e:
+            # Rollback en cas d'erreur
+            logger.error(f"Erreur pendant la transaction: {str(e)}")
+            await self.conn.execute("ROLLBACK")
+            logger.info("Transaction annulée (rollback)")
             raise
 
     async def health_check(self) -> bool:
@@ -74,3 +87,20 @@ class PostgresDataSource(DataSource):
         except Exception as e:
             print(f"Health check failed: {e}")
             return False
+
+    async def upsert_item(self, name: str, value: int):
+        try:
+            await self.connect()
+            async with self.conn.transaction():  # <-- Transaction explicite
+                result = await self.execute_query(
+                    """
+                    INSERT INTO test_items (name, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+                    RETURNING id, name, value
+                    """,
+                    (name, value)
+                )
+                return {"status": "success", "data": result[0]}
+        finally:
+            await self.disconnect()  # Fermeture garantie
