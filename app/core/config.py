@@ -114,16 +114,23 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     
-    # Supabase configuration
-    SUPABASE_URL: str = "https://xqjvxqjvxqjvxqjvxqjv.supabase.co"
-    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhxanZ4cWp2eHFqdnF4cWp2eHFqdiIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzM5NjY5NjAwLCJleHAiOjIwNTUyNDU2MDB9.2QZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQ"
+    # Supabase Configuration
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
     
-    # Database configuration
-    DB_HOST: str = "db.xqjvxqjvxqjvxqjvxqjv.supabase.co"
-    DB_PORT: str = "5432"
+    # Database Configuration
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
     DB_NAME: str = "postgres"
+    
+    # Environment
+    IN_CI: bool = False
+    
+    # Nouveaux paramètres modulaires
+    DB_ENGINE: str = os.getenv("DB_ENGINE", "postgres")  # postgres|mysql|etc
+    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "5"))
     
     # Déclarer explicitement les champs qui causaient des erreurs
     POSTGRES_SERVER: Optional[str] = None
@@ -132,8 +139,12 @@ class Settings(BaseSettings):
     POSTGRES_DB: Optional[str] = None
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
     
-    # Detect if we're in CI environment
-    IN_CI: bool = os.getenv("CI", "false").lower() == "true"
+    SUPABASE_POOLER_HOST: str
+    SUPABASE_POOLER_PORT: int 
+    SUPABASE_POOLER_DBNAME: str
+    SUPABASE_POOLER_USER: str
+    SUPABASE_POOLER_PASSWORD: str
+    SUPABASE_POOLER_SSLMODE: str = "require"
     
     # Override database settings for CI environment
     if IN_CI:
