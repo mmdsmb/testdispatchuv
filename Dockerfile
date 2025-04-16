@@ -30,5 +30,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PGSSLMODE=disable
 ENV DISABLE_IPV6=1
 
+
 # Command to run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

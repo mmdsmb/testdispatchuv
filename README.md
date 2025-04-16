@@ -326,6 +326,9 @@ docker build -t fastapi-app .
 
 docker run --env-file .env -p 8080:8080 fastapi-app
 #docker run -p 8080:8080 fastapi-app
+
+# OU 
+docker build -t fastapi-app . && docker run --env-file .env -p 8080:8080 fastapi-app
 ```
 
 ### Fly.io Deployment
@@ -410,3 +413,18 @@ git push -u origin main
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details. 
+
+
+Réinstallez l'environnement virtuel
+
+```bash
+deactivate
+rm -rf .venv
+#uv venv si vous installer la version par defaut de python
+uv venv --python=/opt/homebrew/opt/python@3.9/bin/python3.9
+# uv venv --python=/c/Users/SAMBAMX/AppData/Local/Programs/Python/Python39 #windows
+source .venv/bin/activate  # Sur Windows: .venv\Scripts\activate (via bash windows source .venv/Scripts/activate)
+uv pip install "psycopg[binary]"
+
+```
+

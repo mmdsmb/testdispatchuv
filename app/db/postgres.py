@@ -2,6 +2,10 @@ import psycopg
 from typing import Optional, List, Any, AsyncIterator
 from app.core.config import settings
 from app.db.base import DataSource
+import logging
+from app.core.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class PostgresDataSource(DataSource):
     def __init__(self):
@@ -16,7 +20,8 @@ class PostgresDataSource(DataSource):
                 dbname=settings.SUPABASE_POOLER_DBNAME,
                 user=settings.SUPABASE_POOLER_USER,
                 password=settings.SUPABASE_POOLER_PASSWORD,
-                sslmode=settings.SUPABASE_POOLER_SSLMODE
+                sslmode=settings.SUPABASE_POOLER_SSLMODE,
+                autocommit=True
             )
 
     async def disconnect(self) -> None:
@@ -33,39 +38,29 @@ class PostgresDataSource(DataSource):
         async with self.conn.cursor() as cursor:
             await cursor.execute(query, params or [])
             
-            # Vérifie si la requête produit des résultats
+            # Debug: Affiche l'état de la transaction
+            logger.info(f"État avant commit : {self.conn.info.transaction_status}")
+            
             if cursor.description is None:
+                assert self.conn is not None  # Ajoutez ceci avant le commit
+                await self.conn.commit()
+                logger.info(f"État après commit : {self.conn.info.transaction_status}")
                 return []
             
-            try:
-                return await cursor.fetchall()
-            except psycopg.ProgrammingError:
-                # Pour les requêtes comme INSERT/UPDATE/DELETE avec RETURNING
-                if "RETURNING" in query.upper():
-                    return await cursor.fetchall()
-                return []
+            results = await cursor.fetchall()
+            if "RETURNING" not in query.upper():
+                assert self.conn is not None  # Ajoutez ceci avant le commit
+                await self.conn.commit()
+            return results
 
-    async def execute_transaction(self, queries: List[str]) -> List[List[Any]]:
-        """Exécute une série de requêtes dans une transaction et retourne les résultats."""
-        if not self.conn:
-            await self.connect()
-        
-        results = []
-        async with self.conn.transaction():
-            for query in queries:
-                async with self.conn.cursor() as cursor:
-                    await cursor.execute(query)
-                    try:
-                        if cursor.description:  # Si la requête retourne des résultats
-                            results.append(await cursor.fetchall())
-                        else:
-                            results.append([])
-                    except psycopg.ProgrammingError:
-                        if "RETURNING" in query.upper():
-                            results.append(await cursor.fetchall())
-                        else:
-                            results.append([])
-        return results
+    async def execute_transaction(self, queries: list):
+        """Exécute plusieurs requêtes dans une transaction."""
+        try:
+            for query, params in queries:
+                await self.execute_query(query, params)
+        except Exception:
+            await self.conn.rollback()
+            raise
 
     async def health_check(self) -> bool:
         """Vérifie si la connexion est active."""
