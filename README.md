@@ -460,8 +460,8 @@ uv pip install "psycopg[binary]"
 history | tail -n 10
 history | tail -n 50 | grep -i "docker" 
 history | tail -n 50 | grep -i "docker" | less
-appuyer sur q pour quitter less
-pour executer un numéro de ligne 
+#appuyer sur q pour quitter less
+#pour executer un numéro de ligne 
 # pour rexcuter une ligne  saisir !numéro eXEMPLE  !72 (RETURN)
 
 ```

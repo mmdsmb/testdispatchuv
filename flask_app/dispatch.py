@@ -11,6 +11,8 @@ from geopy.distance import geodesic
 from app.db.postgres import PostgresDataSource
 from fastapi import HTTPException
 import httpx
+import hashlib
+from typing import Tuple
 
 # Configuration du logging
 logging.basicConfig(
@@ -107,18 +109,25 @@ logger = logging.getLogger(__name__)
 # Fonctions auxiliaires
 # =============================================================================
 
-async def geocode_address(address: str):
-    """Version moderne avec httpx"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": address, "format": "json", "limit": 1}
-        )
-        response.raise_for_status()
-        data = response.json()
-        if data:
-            return f"{data[0]['lat']},{data[0]['lon']}"
-    return None
+async def geocode_address(address: str, postal_code: str = None) -> Tuple[float, float, str]:
+    """Géocode une adresse avec gestion d'erreur et fallback manuel"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": f"{address}, {postal_code}" if postal_code else address, 
+                       "format": "json", "limit": 1}
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data:
+                return float(data[0]['lat']), float(data[0]['lon']), data[0]['display_name']
+            
+        # Fallback si l'API ne retourne rien
+        raise ValueError("Aucun résultat de géocodage")
+    except Exception as e:
+        logger.error(f"Échec du géocodage pour {address}: {e}")
+        raise ValueError(f"Impossible de géocoder l'adresse: {address}")
 
 def is_finite_coordinate(*coords):
     """Vérifie que toutes les coordonnées sont définies."""
@@ -135,30 +144,26 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 def travel_time_single(chauffeur, groupe):
-    """
-    Calcule le temps total (en minutes) pour un service solo :
-    domicile -> pickup -> destination -> retour domicile.
-    On suppose ici que 1 km ≈ 1 minute.
-    """
-    logger.info(f"Calcul du temps de trajet pour le chauffeur {chauffeur['id']} et le groupe {groupe['id']}")
+    """Calcule le temps de trajet ou échoue explicitement"""
     try:
-        if not is_finite_coordinate(chauffeur['lat_chauff'], chauffeur['long_chauff'],
-                                    groupe['lat_pickup'], groupe['long_pickup'],
-                                    groupe['dest_lat'], groupe['dest_lng']):
-            logger.error(f"Coordonnées invalides pour chauffeur {chauffeur['id']} ou groupe {groupe['id']}")
-            raise ValueError(f"Coordonnées invalides pour chauffeur {chauffeur['id']} ou groupe {groupe['id']}")
+        coords = {
+            'chauffeur': (chauffeur['lat_chauff'], chauffeur['long_chauff']),
+            'pickup': (groupe['lat_pickup'], groupe['long_pickup']),
+            'destination': (groupe['dest_lat'], groupe['dest_lng'])
+        }
         
-        t1 = round(geodesic((chauffeur['lat_chauff'], chauffeur['long_chauff']),
-                            (groupe['lat_pickup'], groupe['long_pickup'])).kilometers)
-        t2 = round(groupe['duree_trajet_min'])
-        t3 = round(geodesic((groupe['dest_lat'], groupe['dest_lng']),
-                            (chauffeur['lat_chauff'], chauffeur['long_chauff'])).kilometers)
+        # Validation finale
+        for name, (lat, lng) in coords.items():
+            if None in (lat, lng):
+                raise ValueError(f"Coordonnée manquante ({name}) après géocodage")
+
+        t1 = geodesic(coords['chauffeur'], coords['pickup']).kilometers
+        t2 = groupe['duree_trajet_min']
+        t3 = geodesic(coords['destination'], coords['chauffeur']).kilometers
         
-        total_time = t1 + t2 + t3
-        logger.info(f"Temps de trajet calculé : {total_time} minutes (t1: {t1}, t2: {t2}, t3: {t3})")
-        return total_time
+        return t1 + t2 + t3
     except Exception as e:
-        logger.error(f"Erreur lors du calcul du temps de trajet : {e}")
+        logger.error(f"Erreur de calcul pour {groupe['id']}: {e}")
         raise
 
 def combined_route_cost(chauffeur, g1, g2):
@@ -237,8 +242,7 @@ def combined_route_cost(chauffeur, g1, g2):
 # =============================================================================
 
 async def prepare_demandes(ds: PostgresDataSource, date=None):
-    """Récupère et prépare les demandes de courses"""
-    # Requête de base
+    """Récupère les courses après vérification finale"""
     query = """
         SELECT 
             c.course_id as id,
@@ -252,28 +256,19 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
             c.date_heure_prise_en_charge,
             EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min
         FROM course c
-        LEFT JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
-        LEFT JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
+        JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
+        JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
     """
-    
-    params = {}
     if date:
         query += " WHERE DATE(c.date_heure_prise_en_charge) = %(date)s"
-        params["date"] = date
     
-    rows = await ds.fetch_all(query, params)
+    rows = await ds.fetch_all(query, {"date": date} if date else {})
+    if not rows:
+        raise ValueError("Aucune course valide après vérification des coordonnées")
     
-    # Conversion en DataFrame et préparation (similaire à la logique Excel)
-    df = pd.DataFrame(rows)
-    df['date_heure_prise_en_charge'] = pd.to_datetime(df['date_heure_prise_en_charge'])
-    df['pickup_date'] = df['date_heure_prise_en_charge'].dt.strftime("%Y-%m-%d")
-    df['t'] = df['date_heure_prise_en_charge'].dt.strftime("%H:%M")
-    df['duree_trajet_min'] = 15  # Valeur par défaut, à adapter selon votre logique
-    
-    return df[['id', 'n', 'pickup_date', 't', 't_min', 'lat_pickup', 'long_pickup', 
-               'dest_lat', 'dest_lng', 'duree_trajet_min', 'pickup_address', 'dropoff_address']]
+    return pd.DataFrame(rows).to_dict('records')
 
-async def prepare_chauffeurs(ds: PostgresDataSource):
+async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
     """Récupère et prépare les chauffeurs disponibles"""
     query = """
         SELECT 
@@ -288,9 +283,13 @@ async def prepare_chauffeurs(ds: PostgresDataSource):
         JOIN dispoChauffeur dc ON c.chauffeur_id = dc.chauffeur_id
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
         WHERE c.actif = true
-        AND dc.date_debut <= NOW() 
-        AND dc.date_fin >= NOW()
+        
     """
+    
+    params = {}
+    if date:
+        query += " WHERE DATE(c.date_debut) = %(date)s"
+        params["date"] = date
     
     rows = await ds.fetch_all(query)
     df = pd.DataFrame(rows)
@@ -617,100 +616,26 @@ def groupes_non_couverts(assignments, groupes):
 
 async def solve_dispatch_problem(ds: PostgresDataSource, date_param=None):
     """Fonction principale pour résoudre le problème de dispatch"""
-    # Récupération des données
-    df_demandes = await prepare_demandes(ds, date_param)
-    df_chauffeurs = await prepare_chauffeurs(ds)
-    
-    # Conversion en listes de dictionnaires
-    groupes = df_demandes.to_dict(orient='records')
-    chauffeurs = df_chauffeurs.to_dict(orient='records')
+    try:
+        # 1. Vérification obligatoire des coordonnées
+        await verify_and_complete_coordinates(ds)  # Lève une exception si des données sont manquantes
 
-    # Calculate solo_cost and combo_cost
-    solo_cost = {(g['id'], c['id']): travel_time_single(c, g)
-                 for g in groupes for c in chauffeurs}
-    combo_cost = {}
-    for g1, g2 in combinations(groupes, 2):
-        if abs(g1['t_min'] - g2['t_min']) <= 45:
-            for c in chauffeurs:
-                if c['n'] >= (g1['N'] + g2['N']):
-                    cost = combined_route_cost(c, g1, g2)
-                    if cost is not None:
-                        combo_cost[(g1['id'], g2['id'], c['id'])] = cost
+        # 2. Récupération des données (échoue si coordonnées manquantes)
+        groupes = await prepare_demandes(ds, date_param)
+        chauffeurs = await prepare_chauffeurs(ds)
 
-    # Move the MILP logic here
-    milp_time_limit = 300  # 5 minutes
-    prob, result_status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-    milp_solution_optimal = (pulp.LpStatus[result_status] == "Optimal")
-    print("Statut MILP initial :", pulp.LpStatus[result_status])
-    
-    # Extract assignments
-    milp_assignments = extract_assignments(groupes, chauffeurs, x, y)
+        # 3. Calcul des coûts (échoue immédiatement via travel_time_single si problème)
+        solo_cost = {(g['id'], c['id']): travel_time_single(c, g) 
+                    for g in groupes for c in chauffeurs}
+        
+        # ... (reste du code)
 
-    # If MILP is not optimal, use heuristic
-    if not milp_solution_optimal:
-        print("La solution MILP n'est pas optimale après 5 minutes. Lancement du recuit simulé...")
-        recuit_assignments = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost)
-    else:
-        recuit_assignments = milp_assignments
-
-    # Check for uncovered groups
-    non_couverts = groupes_non_couverts(recuit_assignments, groupes)
-    if non_couverts:
-        print("Certains groupes ne sont pas couverts. Traitement spécifique des groupes non couverts...")
-        # First try MILP for uncovered groups
-        prob_nc, result_status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-        nc_milp_optimal = (pulp.LpStatus[result_status_nc] == "Optimal")
-        nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
-        # If MILP fails, use heuristic
-        if not nc_milp_optimal:
-            print("La solution MILP pour les groupes non couverts n'est pas optimale. Lancement du recuit simulé pour ces groupes...")
-            nc_assignments = heuristic_solution(non_couverts, chauffeurs, solo_cost, combo_cost)
-        # Merge assignments
-        for g in non_couverts:
-            recuit_assignments.setdefault(g['id'], [])
-            if g['id'] in nc_assignments:
-                recuit_assignments[g['id']].extend(nc_assignments[g['id']])
-
-    # Generate output CSV
-    rows = []
-    for g in groupes:
-        row = {
-            "group_id": g['id'],
-            "N": g['N'],
-            "pickup_date": g['pickup_date'],
-            "pickup_time": g['t'],
-            "duree_trajet_min": g['duree_trajet_min'],
-            "lieu_prise_en_charge": g.get("pickup_address", ""),
-            "destination": g.get("dropoff_address", "")
-        }
-        aff_list = recuit_assignments.get(g['id'], [])
-        for i in range(20):  # Support for up to 20 drivers
-            if i < len(aff_list):
-                a = aff_list[i]
-                ch = next((ch for ch in chauffeurs if ch['id'] == a["chauffeur"]), {})
-                row[f"chauffeur_{i+1}_id"] = ch.get('id', '')
-                row[f"chauffeur_{i+1}_nom_prenom"] = ch.get('prenom_nom', '')
-                row[f"chauffeur_{i+1}_trajet"] = a["trajet"]
-                row[f"chauffeur_{i+1}_n"] = ch.get('n', '')
-                row[f"chauffeur_{i+1}_combo_id"] = a.get("combo_id", '')
-                row[f"chauffeur_{i+1}_combiné_avec"] = ','.join(map(str, a.get("combiné_avec", [])))
-            else:
-                row[f"chauffeur_{i+1}_id"] = ''
-                row[f"chauffeur_{i+1}_nom_prenom"] = ''
-                row[f"chauffeur_{i+1}_trajet"] = ''
-                row[f"chauffeur_{i+1}_n"] = ''
-                row[f"chauffeur_{i+1}_combo_id"] = ''
-                row[f"chauffeur_{i+1}_combiné_avec"] = ''
-        rows.append(row)
-
-    df_output = pd.DataFrame(rows)
-    output_csv = "affectations_groupes_chauffeurs_final.csv"
-    df_output.to_csv(output_csv, index=False)
-    print(f"Le fichier CSV '{output_csv}' a été généré avec les noms des chauffeurs, lieu de prise en charge et destination.")
-    print(df_output)
-
-    # Save assignments to database
-    await save_affectations(ds, recuit_assignments)
+    except ValueError as e:
+        logger.error(f"ARRÊT IMMÉDIAT : {e}")
+        raise  # Interrompt l'exécution
+    except Exception as e:
+        logger.error(f"Erreur inattendue : {e}")
+        raise
 
 async def save_affectations(ds: PostgresDataSource, affectations):
     """Sauvegarde les affectations dans la base de données"""
@@ -732,3 +657,87 @@ async def save_affectations(ds: PostgresDataSource, affectations):
             "chauffeur_id": affectation["chauffeur_id"],
             "statut": affectation["statut"]
         })
+
+async def verify_and_complete_coordinates(ds: PostgresDataSource):
+    """Garantit que toutes les coordonnées sont valides ou échoue"""
+    errors = []
+    
+    # 1. Traitement des chauffeurs
+    chauffeurs = await ds.execute_query("""
+        SELECT c.chauffeur_id, c.adresse, c.code_postal, c.hash_adresse, ag.latitude, ag.longitude
+        FROM chauffeur c
+        LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
+        WHERE c.hash_adresse IS NULL OR ag.latitude IS NULL
+    """)
+    
+    for ch in chauffeurs:
+        try:
+            chauffeur_id, adresse, code_postal, _, _, _ = ch
+            
+            # Tentative de géocodage
+            lat, lng, addr = await geocode_address(adresse, code_postal)
+            hash_addr = generate_address_hash(adresse, code_postal)
+            
+            await ds.execute_transaction("""
+                INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (hash_address) DO UPDATE
+                SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+            """, [hash_addr, addr, lat, lng])
+            
+            await ds.execute_query("""
+                UPDATE chauffeur SET hash_adresse = %s WHERE chauffeur_id = %s
+            """, [hash_addr, chauffeur_id])
+            
+        except Exception as e:
+            errors.append(f"Chauffeur {chauffeur_id}: {e}")
+
+    # 2. Traitement des courses
+    courses = await ds.execute_query("""
+        SELECT c.course_id, c.lieu_prise_en_charge, c.destination,
+               c.hash_lieu_prise_en_charge, c.hash_destination,
+               ag1.latitude, ag1.longitude, ag2.latitude, ag2.longitude
+        FROM course c
+        LEFT JOIN adresseGps ag1 ON c.hash_lieu_prise_en_charge = ag1.hash_address
+        LEFT JOIN adresseGps ag2 ON c.hash_destination = ag2.hash_address
+        WHERE c.hash_lieu_prise_en_charge IS NULL OR c.hash_destination IS NULL
+           OR ag1.latitude IS NULL OR ag2.latitude IS NULL
+    """)
+    
+    for cr in courses:
+        try:
+            course_id, pickup_addr, dest_addr, hash_pickup, hash_dest, _, _, _, _ = cr
+            
+            # Lieu de prise en charge
+            if not hash_pickup:
+                lat, lng, addr = await geocode_address(pickup_addr)
+                hash_addr = generate_address_hash(pickup_addr)
+                await _upsert_address(ds, hash_addr, addr, lat, lng)
+                await ds.execute_query("""
+                    UPDATE course SET hash_lieu_prise_en_charge = %s WHERE course_id = %s
+                """, [hash_addr, course_id])
+            
+            # Destination
+            if not hash_dest:
+                lat, lng, addr = await geocode_address(dest_addr)
+                hash_addr = generate_address_hash(dest_addr)
+                await _upsert_address(ds, hash_addr, addr, lat, lng)
+                await ds.execute_query("""
+                    UPDATE course SET hash_destination = %s WHERE course_id = %s
+                """, [hash_addr, course_id])
+                
+        except Exception as e:
+            errors.append(f"Course {course_id}: {e}")
+
+    # Échec global si des erreurs critiques persistent
+    if errors:
+        raise ValueError(f"Échec de la complétion des coordonnées:\n" + "\n".join(errors))
+
+async def _upsert_address(ds: PostgresDataSource, hash_addr: str, address: str, lat: float, lng: float):
+    """Helper pour insérer/mettre à jour une adresse"""
+    await ds.execute_query("""
+        INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (hash_address) DO UPDATE
+        SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+    """, [hash_addr, address, lat, lng])

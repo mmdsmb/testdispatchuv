@@ -1,1 +1,74 @@
-2025-04-17 21:36:08,214 - ERROR - �chec de la connexion : Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by setting 'asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())'
+2025-04-18 01:27:07,539 - INFO - Connexion à la base de données établie avec succès
+2025-04-18 01:27:07,562 - INFO - Transaction démarrée
+2025-04-18 01:27:07,563 - DEBUG - Exécution dans transaction: 
+        SELECT c.chauffeur_id, c.adresse, c.code_postal, c.hash_adresse, ag.latitude, ag.longitude
+        FROM chauffeur c
+        LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
+        WHERE c.hash_adresse IS NULL OR ag.latitude IS NULL
+    
+2025-04-18 01:27:07,583 - INFO - Transaction validée avec succès
+2025-04-18 01:27:08,006 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78570%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:08,847 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78955%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:09,787 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78290%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:10,874 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78700%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:11,832 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+91800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:12,921 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78955%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:14,457 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78955%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:14,867 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95100%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:15,811 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+92000%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:16,914 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:17,836 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+93300%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:18,861 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+91000%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:19,884 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95110%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:20,907 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+93150%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:21,933 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+93220%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:22,855 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+91200%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:23,878 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:24,901 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:25,841 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95130%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:28,487 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78100%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:28,695 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:29,818 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+60180%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:30,739 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+91000%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:31,763 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78870%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:32,786 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+95800%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:33,781 - INFO - HTTP Request: GET https://nominatim.openstreetmap.org/search?q=None%2C+78190%2C+France&format=json&limit=1 "HTTP/1.1 200 OK"
+2025-04-18 01:27:33,807 - INFO - Transaction démarrée
+2025-04-18 01:27:33,807 - DEBUG - Exécution dans transaction: 
+        SELECT c.course_id, c.lieu_prise_en_charge, c.destination,
+               c.hash_lieu_prise_en_charge, c.hash_destination,
+               ag1.latitude, ag1.longitude, ag2.latitude, ag2.longitude
+        FROM course c
+        LEFT JOIN adresseGps ag1 ON c.hash_lieu_prise_en_charge = ag1.hash_address
+        LEFT JOIN adresseGps ag2 ON c.hash_destination = ag2.hash_address
+        WHERE c.hash_lieu_prise_en_charge IS NULL OR c.hash_destination IS NULL
+           OR ag1.latitude IS NULL OR ag2.latitude IS NULL
+    
+2025-04-18 01:27:33,827 - INFO - Transaction validée avec succès
+2025-04-18 01:27:33,827 - ERROR - ARRÊT IMMÉDIAT : Échec de la complétion des coordonnées:
+Chauffeur 27: name 'generate_address_hash' is not defined
+Chauffeur 26: name 'generate_address_hash' is not defined
+Chauffeur 25: name 'generate_address_hash' is not defined
+Chauffeur 24: name 'generate_address_hash' is not defined
+Chauffeur 23: name 'generate_address_hash' is not defined
+Chauffeur 21: name 'generate_address_hash' is not defined
+Chauffeur 20: name 'generate_address_hash' is not defined
+Chauffeur 19: name 'generate_address_hash' is not defined
+Chauffeur 18: name 'generate_address_hash' is not defined
+Chauffeur 17: name 'generate_address_hash' is not defined
+Chauffeur 16: name 'generate_address_hash' is not defined
+Chauffeur 15: name 'generate_address_hash' is not defined
+Chauffeur 14: name 'generate_address_hash' is not defined
+Chauffeur 13: name 'generate_address_hash' is not defined
+Chauffeur 12: name 'generate_address_hash' is not defined
+Chauffeur 11: name 'generate_address_hash' is not defined
+Chauffeur 10: name 'generate_address_hash' is not defined
+Chauffeur 9: name 'generate_address_hash' is not defined
+Chauffeur 8: name 'generate_address_hash' is not defined
+Chauffeur 7: name 'generate_address_hash' is not defined
+Chauffeur 6: name 'generate_address_hash' is not defined
+Chauffeur 5: name 'generate_address_hash' is not defined
+Chauffeur 4: name 'generate_address_hash' is not defined
+Chauffeur 3: name 'generate_address_hash' is not defined
+Chauffeur 2: name 'generate_address_hash' is not defined
+Chauffeur 1: name 'generate_address_hash' is not defined
