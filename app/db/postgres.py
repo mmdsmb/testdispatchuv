@@ -104,3 +104,13 @@ class PostgresDataSource(DataSource):
                 return {"status": "success", "data": result[0]}
         finally:
             await self.disconnect()  # Fermeture garantie
+
+    async def fetch_all(self, query, params=None):
+        """Execute a query and return all rows as a list of dictionaries."""
+        if not self.conn:
+            await self.connect()  # Ensure connection is active
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(query, params)
+            columns = [col.name for col in cursor.description]
+            rows = await cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]

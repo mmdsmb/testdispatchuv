@@ -87,3 +87,6 @@ docker-compose.override.yml
 # uv specific
 .uv/
 .venv/
+
+flask_app/*.xlsx
+flask_app/dalaldjam_db-20250324.sql

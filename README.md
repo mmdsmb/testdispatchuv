@@ -329,7 +329,32 @@ docker run --env-file .env -p 8080:8080 fastapi-app
 
 # OU 
 docker build -t fastapi-app . && docker run --env-file .env -p 8080:8080 fastapi-app
+
+docker exec -it 1e572707f5e7623e14b69b448283b5390cb6f1fa66aa221ed2bfa45ba4700ff4 bash
+
+docker ps --filter "status=running"  # Ne montre que les conteneurs en cours d'exécution.
+
+# Copier le fichier vers votre machine
+docker cp <nom_conteneur>:/chemin/fichier.txt .
+
+# Éditez avec votre éditeur local (VS Code, nano, etc.)
+nano fichier.txt
+
+# Remettre dans le conteneur
+docker cp fichier.txt <nom_conteneur>:/chemin/fichier.txt
+docker cp flask_app/dispatch.py  wizardly_solomon:/app/flask_app/dispatch.py
+
+#Pour récupérer uniquement les noms des conteneurs Docker actifs (en cours d'exécution) qui contiennent un terme spécifique comme "wiz", voici la commande optimale :
+$ docker ps -a --format "{{.Names}}" | grep "wiz"
+
+# Si plusieurs résultats : utilisez un filtre plus précis comme grep "^fastapi"
+docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Status}}" | grep -E "fast[^-]"
+
+docker logs [NOM_DU_CONTENEUR]  # Voir les logs
+docker exec -it [NOM_DU_CONTENEUR] bash  # Entrer dans le conteneur
 ```
+
+
 
 ### Fly.io Deployment
 
@@ -410,6 +435,8 @@ git remote set-url origin git@github.com:mmdsmb/testdispatchuv.git
 git push -u origin main
 ```
 
+
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details. 
@@ -424,7 +451,19 @@ rm -rf .venv
 uv venv --python=/opt/homebrew/opt/python@3.9/bin/python3.9
 # uv venv --python=/c/Users/SAMBAMX/AppData/Local/Programs/Python/Python39 #windows
 source .venv/bin/activate  # Sur Windows: .venv\Scripts\activate (via bash windows source .venv/Scripts/activate)
+uv pip install -e .
 uv pip install "psycopg[binary]"
 
 ```
+
+```bash
+history | tail -n 10
+history | tail -n 50 | grep -i "docker" 
+history | tail -n 50 | grep -i "docker" | less
+appuyer sur q pour quitter less
+pour executer un numéro de ligne 
+# pour rexcuter une ligne  saisir !numéro eXEMPLE  !72 (RETURN)
+
+```
+
 

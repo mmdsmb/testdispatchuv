@@ -1,0 +1,1 @@
+2025-04-17 21:36:08,214 - ERROR - Échec de la connexion : Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by setting 'asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())'
