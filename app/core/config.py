@@ -4,6 +4,8 @@ import subprocess
 from typing import Any, Dict, Optional, List
 from pydantic import PostgresDsn, validator
 from pydantic_settings import BaseSettings
+import logging
+from pathlib import Path
 
 # Détecter l'environnement CI
 IN_CI = os.environ.get("CI") == "true"
@@ -14,100 +16,12 @@ IN_DOCKER = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER") 
 os.environ["PGSSLMODE"] = "disable"
 os.environ["DISABLE_IPV6"] = "1"
 
-# Patcher directement la fonction socket.getaddrinfo pour ignorer IPv6
-# Ce hook est plus direct que notre solution précédente
-original_getaddrinfo = socket.getaddrinfo
-
-def force_ipv4_getaddrinfo(*args, **kwargs):
-    """Wrapper qui force socket.getaddrinfo à n'utiliser que IPv4."""
-    # Forcer la famille d'adresses à IPv4
-    args = list(args)
-    if len(args) > 2:
-        args[2] = socket.AF_INET  # Forcer IPv4
-    else:
-        kwargs['family'] = socket.AF_INET
-    
-    try:
-        return original_getaddrinfo(*args, **kwargs)
-    except Exception as e:
-        print(f"Erreur dans getaddrinfo patché: {e}")
-        # Si ça échoue, on essaie la version originale
-        return original_getaddrinfo(*args, **kwargs)
-
-# Remplacer la fonction socket.getaddrinfo par notre version
-socket.getaddrinfo = force_ipv4_getaddrinfo
 
 # Liste d'adresses IP connues pour Supabase (à mettre à jour si nécessaire)
 SUPABASE_KNOWN_IPS = {
     "db.zpjemgpnfaeayofvnkzo.supabase.co": ["34.142.230.92"]
 }
 
-def resolve_hostname(hostname: str) -> List[str]:
-    """
-    Tente de résoudre un nom d'hôte en adresses IP de plusieurs façons.
-    
-    Args:
-        hostname: Le nom d'hôte à résoudre
-        
-    Returns:
-        Liste d'adresses IP (vide si aucune n'est trouvée)
-    """
-    ips = []
-    
-    # Si nous avons des IPs connues pour ce nom d'hôte, les utiliser
-    if hostname in SUPABASE_KNOWN_IPS:
-        print(f"Utilisation d'adresses IP connues pour {hostname}: {SUPABASE_KNOWN_IPS[hostname]}")
-        return SUPABASE_KNOWN_IPS[hostname]
-    
-    # 1. Résolution standard
-    try:
-        print(f"Tentative de résolution standard de {hostname}")
-        addr_info = socket.getaddrinfo(hostname, 5432, socket.AF_INET, socket.SOCK_STREAM)
-        for info in addr_info:
-            ip = info[4][0]
-            if ip not in ips:
-                ips.append(ip)
-        if ips:
-            print(f"Résolution réussie pour {hostname}: {ips}")
-            return ips
-    except Exception as e:
-        print(f"Échec de la résolution standard pour {hostname}: {e}")
-    
-    # 2. Tentative avec nslookup
-    try:
-        print(f"Tentative avec nslookup pour {hostname}")
-        result = subprocess.run(["nslookup", hostname], capture_output=True, text=True)
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                if "Address:" in line and ":" in line:
-                    ip = line.split(":")[-1].strip()
-                    if ip not in ips and not ip.startswith("127."):
-                        ips.append(ip)
-            if ips:
-                print(f"Résolution nslookup réussie pour {hostname}: {ips}")
-                return ips
-    except Exception as e:
-        print(f"Échec de nslookup pour {hostname}: {e}")
-    
-    # 3. Tentative avec getent
-    try:
-        print(f"Tentative avec getent pour {hostname}")
-        result = subprocess.run(["getent", "hosts", hostname], capture_output=True, text=True)
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if parts and parts[0] and not parts[0].startswith("127."):
-                    ip = parts[0]
-                    if ip not in ips:
-                        ips.append(ip)
-            if ips:
-                print(f"Résolution getent réussie pour {hostname}: {ips}")
-                return ips
-    except Exception as e:
-        print(f"Échec de getent pour {hostname}: {e}")
-    
-    print(f"Aucune méthode de résolution n'a fonctionné pour {hostname}")
-    return ips
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "FastAPI Project"
@@ -161,9 +75,28 @@ class Settings(BaseSettings):
             return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
+    GOOGLE_MAPS_API_URL: str = None  # Configuré via .env #"https://maps.googleapis.com/maps/api/geocode/json"
+    GOOGLE_MAPS_API_KEY: str = None  # Configuré via .env
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
         extra = "allow"  # Permettre les champs supplémentaires
 
 settings = Settings() 
+
+if os.environ.get('DISABLE_CONFIG_LOGGING'):
+    # Désactive complètement la configuration des logs si DISABLE_CONFIG_LOGGING est défini
+    pass
+else:
+    # Ancienne configuration (gardée pour compatibilité)
+    LOG_DIR = Path(__file__).parent.parent / "logs"
+    LOG_DIR.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(LOG_DIR / 'dispatch.log'),
+            logging.StreamHandler()
+        ]
+    ) 

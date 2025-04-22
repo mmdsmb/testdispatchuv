@@ -108,9 +108,21 @@ class PostgresDataSource(DataSource):
     async def fetch_all(self, query, params=None):
         """Execute a query and return all rows as a list of dictionaries."""
         if not self.conn:
-            await self.connect()  # Ensure connection is active
+            await self.connect()
         async with self.conn.cursor() as cursor:
             await cursor.execute(query, params)
             columns = [col.name for col in cursor.description]
             rows = await cursor.fetchall()
             return [dict(zip(columns, row)) for row in rows]
+
+    async def fetch_one(self, query: str, params=None):
+        """Exécute une requête et retourne une seule ligne."""
+        async with self.conn.cursor() as cur:
+            await cur.execute(query, params)
+            return await cur.fetchone()
+
+    async def close(self) -> None:
+        """Ferme la connexion à la base de données."""
+        if hasattr(self, "conn") and self.conn:
+            await self.conn.close()
+            self.conn = None

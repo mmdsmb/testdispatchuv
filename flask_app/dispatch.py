@@ -13,6 +13,8 @@ from fastapi import HTTPException
 import httpx
 import hashlib
 from typing import Tuple
+from app.core.geocoding import geocoding_service
+from app.core.utils import generate_address_hash
 
 # Configuration du logging
 logging.basicConfig(
@@ -242,7 +244,7 @@ def combined_route_cost(chauffeur, g1, g2):
 # =============================================================================
 
 async def prepare_demandes(ds: PostgresDataSource, date=None):
-    """Récupère les courses après vérification finale"""
+    """Récupère les courses avec calcul des distances en Python (sans SQL geodesic)"""
     query = """
         SELECT 
             c.course_id as id,
@@ -254,10 +256,12 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
             ag_dest.latitude as dest_lat,
             ag_dest.longitude as dest_lng,
             c.date_heure_prise_en_charge,
-            EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min
+            EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
+            cc.duree_trajet_min  -- Récupération depuis coursecalcul
         FROM course c
         JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
         JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
+        LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
     """
     if date:
         query += " WHERE DATE(c.date_heure_prise_en_charge) = %(date)s"
@@ -266,7 +270,25 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
     if not rows:
         raise ValueError("Aucune course valide après vérification des coordonnées")
     
-    return pd.DataFrame(rows).to_dict('records')
+    # Conversion en list[dict] et calcul des durées manquantes
+    demandes = []
+    for row in rows:
+        demande = dict(row)
+        if demande['duree_trajet_min'] is None:
+            # Calcul de la durée en Python avec geopy.geodesic
+            try:
+                distance_km = geodesic(
+                    (demande['lat_pickup'], demande['long_pickup']),
+                    (demande['dest_lat'], demande['dest_lng'])
+                ).kilometers
+                demande['duree_trajet_min'] = distance_km * 2  # Exemple: 2 min/km
+            except Exception as e:
+                logger.error(f"Erreur calcul durée pour course {demande['id']}: {e}")
+                demande['duree_trajet_min'] = 0  # Valeur par défaut
+        
+        demandes.append(demande)
+    
+    return demandes
 
 async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
     """Récupère et prépare les chauffeurs disponibles"""
@@ -283,25 +305,14 @@ async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
         JOIN dispoChauffeur dc ON c.chauffeur_id = dc.chauffeur_id
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
         WHERE c.actif = true
-        
     """
+    rows = await ds.fetch_all(query, {"date": date} if date else {})
     
-    params = {}
-    if date:
-        query += " WHERE DATE(c.date_debut) = %(date)s"
-        params["date"] = date
+    # Conversion explicite en list[dict]
+    if not rows or isinstance(rows[0], str):
+        raise ValueError("Données des chauffeurs mal formatées")
     
-    rows = await ds.fetch_all(query)
-    df = pd.DataFrame(rows)
-
-    # Debug: Afficher les colonnes disponibles
-    print("Colonnes disponibles:", df.columns.tolist()) 
-    
-    # Conversion des types si nécessaire
-    df['lat_chauff'] = pd.to_numeric(df['lat_chauff'], errors='coerce')
-    df['long_chauff'] = pd.to_numeric(df['long_chauff'], errors='coerce')
-    
-    return df[['id', 'n', 'lat_chauff', 'long_chauff', 'availability_date', 'prenom_nom']]
+    return rows  # Supposé déjà être une list[dict]
 
 # =============================================================================
 # Précalcul des coûts pour améliorer la performance
@@ -617,16 +628,25 @@ def groupes_non_couverts(assignments, groupes):
 async def solve_dispatch_problem(ds: PostgresDataSource, date_param=None):
     """Fonction principale pour résoudre le problème de dispatch"""
     try:
-        # 1. Vérification obligatoire des coordonnées
-        await verify_and_complete_coordinates(ds)  # Lève une exception si des données sont manquantes
+        # 1. Vérification des coordonnées
+        await verify_and_complete_coordinates(ds)
 
-        # 2. Récupération des données (échoue si coordonnées manquantes)
+        # 2. Récupération des données
         groupes = await prepare_demandes(ds, date_param)
-        chauffeurs = await prepare_chauffeurs(ds)
+        chauffeurs = await prepare_chauffeurs(ds, date_param)
 
-        # 3. Calcul des coûts (échoue immédiatement via travel_time_single si problème)
-        solo_cost = {(g['id'], c['id']): travel_time_single(c, g) 
-                    for g in groupes for c in chauffeurs}
+        # Validation du format des données
+        if not groupes or not isinstance(groupes[0], dict):
+            raise ValueError("Données des groupes invalides")
+        if not chauffeurs or not isinstance(chauffeurs[0], dict):
+            raise ValueError("Données des chauffeurs invalides")
+
+        # 3. Calcul des coûts
+        solo_cost = {
+            (g['id'], c['id']): travel_time_single(c, g)
+            for g in groupes
+            for c in chauffeurs
+        }
         
         # ... (reste du code)
 
@@ -634,7 +654,7 @@ async def solve_dispatch_problem(ds: PostgresDataSource, date_param=None):
         logger.error(f"ARRÊT IMMÉDIAT : {e}")
         raise  # Interrompt l'exécution
     except Exception as e:
-        logger.error(f"Erreur inattendue : {e}")
+        logger.error(f"Erreur inattendue : {str(e)}")
         raise
 
 async def save_affectations(ds: PostgresDataSource, affectations):
@@ -652,14 +672,14 @@ async def save_affectations(ds: PostgresDataSource, affectations):
     """
     
     for affectation in affectations:
-        await ds.execute_transaction(query, {
+        await ds.execute_transaction([(query, {
             "groupe_id": affectation["groupe_id"],
             "chauffeur_id": affectation["chauffeur_id"],
             "statut": affectation["statut"]
-        })
+        })])
 
 async def verify_and_complete_coordinates(ds: PostgresDataSource):
-    """Garantit que toutes les coordonnées sont valides ou échoue"""
+    """Version utilisant uniquement le service de géocodage"""
     errors = []
     
     # 1. Traitement des chauffeurs
@@ -667,30 +687,48 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
         SELECT c.chauffeur_id, c.adresse, c.code_postal, c.hash_adresse, ag.latitude, ag.longitude
         FROM chauffeur c
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
-        WHERE c.hash_adresse IS NULL OR ag.latitude IS NULL
+        WHERE (c.hash_adresse IS NULL OR ag.latitude IS NULL OR ag.longitude IS NULL)
+       
     """)
     
     for ch in chauffeurs:
         try:
             chauffeur_id, adresse, code_postal, _, _, _ = ch
             
-            # Tentative de géocodage
-            lat, lng, addr = await geocode_address(adresse, code_postal)
-            hash_addr = generate_address_hash(adresse, code_postal)
+            # Validation de l'adresse
+            if not adresse or adresse.strip() == "":
+                logger.warning(f"Chauffeur {chauffeur_id} ignoré : adresse manquante")
+                continue  # Passer au chauffeur suivant
             
-            await ds.execute_transaction("""
+            full_address = f"{adresse}, {code_postal}" if code_postal else adresse
+            
+            # Appel direct au service
+            lat, lng = await geocoding_service.get_coordinates(full_address)
+            if None in (lat, lng):
+                raise ValueError("Échec du géocodage")
+                
+            hash_addr = generate_address_hash(full_address)
+            
+            await ds.execute_transaction([(
+                """
                 INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (hash_address) DO UPDATE
                 SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-            """, [hash_addr, addr, lat, lng])
+                """,
+                (hash_addr, full_address, lat, lng)
+            )])
             
             await ds.execute_query("""
                 UPDATE chauffeur SET hash_adresse = %s WHERE chauffeur_id = %s
             """, [hash_addr, chauffeur_id])
             
+        except HTTPException as e:
+            logger.error(f"Erreur API géocodage pour chauffeur {chauffeur_id}: {e.detail}")
+            errors.append(f"Chauffeur {chauffeur_id}: {e.detail}")
         except Exception as e:
-            errors.append(f"Chauffeur {chauffeur_id}: {e}")
+            logger.error(f"Erreur traitement chauffeur {chauffeur_id}: {str(e)}")
+            errors.append(f"Chauffeur {chauffeur_id}: {str(e)}")
 
     # 2. Traitement des courses
     courses = await ds.execute_query("""
@@ -710,34 +748,53 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
             
             # Lieu de prise en charge
             if not hash_pickup:
-                lat, lng, addr = await geocode_address(pickup_addr)
+                lat, lng = await geocoding_service.get_coordinates(pickup_addr)
+                if None in (lat, lng):
+                    raise ValueError("Échec géocodage lieu de prise en charge")
+                    
                 hash_addr = generate_address_hash(pickup_addr)
-                await _upsert_address(ds, hash_addr, addr, lat, lng)
+                await ds.execute_transaction([(
+                    """
+                    INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (hash_address) DO UPDATE
+                    SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+                    """,
+                    (hash_addr, pickup_addr, lat, lng)
+                )])
                 await ds.execute_query("""
                     UPDATE course SET hash_lieu_prise_en_charge = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
             
             # Destination
             if not hash_dest:
-                lat, lng, addr = await geocode_address(dest_addr)
+                lat, lng = await geocoding_service.get_coordinates(dest_addr)
+                if None in (lat, lng):
+                    raise ValueError("Échec géocodage destination")
+                    
                 hash_addr = generate_address_hash(dest_addr)
-                await _upsert_address(ds, hash_addr, addr, lat, lng)
+                await ds.execute_transaction([(
+                    """
+                    INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (hash_address) DO UPDATE
+                    SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+                    """,
+                    (hash_addr, dest_addr, lat, lng)
+                )])
                 await ds.execute_query("""
                     UPDATE course SET hash_destination = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
                 
+        except HTTPException as e:
+            logger.error(f"Erreur API géocodage course {course_id}: {e.detail}")
+            errors.append(f"Course {course_id}: {e.detail}")
         except Exception as e:
-            errors.append(f"Course {course_id}: {e}")
+            logger.error(f"Erreur traitement course {course_id}: {str(e)}")
+            errors.append(f"Course {course_id}: {str(e)}")
 
-    # Échec global si des erreurs critiques persistent
     if errors:
-        raise ValueError(f"Échec de la complétion des coordonnées:\n" + "\n".join(errors))
-
-async def _upsert_address(ds: PostgresDataSource, hash_addr: str, address: str, lat: float, lng: float):
-    """Helper pour insérer/mettre à jour une adresse"""
-    await ds.execute_query("""
-        INSERT INTO adresseGps (hash_address, address, latitude, longitude)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (hash_address) DO UPDATE
-        SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-    """, [hash_addr, address, lat, lng])
+        raise ValueError(
+            f"Échec sur {len(errors)} entrées lors de la complétion des coordonnées:\n"
+            + "\n".join(errors)
+        )
