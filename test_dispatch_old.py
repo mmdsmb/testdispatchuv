@@ -1,43 +1,50 @@
+import os
 import asyncio
 import logging
+import argparse
+from pathlib import Path
 from typing import Optional
-from app.db.postgres import PostgresDataSource
-from app.core.course_processor import CourseProcessor
-from flask_app.dispatch import solve_dispatch_problem
 
+# Configuration des logs AVANT les imports
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)  # Crée le dossier si inexistant
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_DIR / 'dispatch.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-async def update_courses_and_dispatch(ds: PostgresDataSource, date_param: Optional[str] = None) -> None:
-    """Orchestration complète du processus de mise à jour des courses et du dispatch"""
+# Imports après la configuration des logs
+from app.db.postgres import PostgresDataSource
+from flask_app.dispatch import solve_dispatch_problem
+from app.core.course_processor import CourseProcessor
+
+async def update_courses_and_dispatch(ds: PostgresDataSource, date_param=None):
+    """Orchestration complète du processus"""
     try:
         # 1. Mise à jour des courses
         processor = CourseProcessor(ds)
-        
-        # Récupérer les courses à traiter
         courses = await ds.fetch_all("""
-            SELECT c.course_id
-            FROM course c
-            LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-            WHERE  c.hash_route is null 
-            OR c.hash_route = ''
-            OR cc.duree_trajet_min is null 
-            OR cc.distance_routiere_km is null
-            OR cc.points_passage_coords is null
-            OR cc.distance_vol_oiseau_km is null
-            OR cc.duree_trajet_secondes is null
-            OR cc.points_passage is null
-
-        """)
+                SELECT  c.course_id
+                FROM course c
+                LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
+                where cc.duree_trajet_min is null 
+                or cc.points_passage_coords is null 
+                or c.hash_route is null 
+                or c.hash_route = ''
+        """)  
         
-        logger.info(f"Nombre de courses à traiter: {len(courses)}")
-        
-        # Traiter chaque course
         for course in courses:
             try:
                 await processor.process_course(course['course_id'])
-                logger.info(f"Course {course['course_id']} traitée avec succès")
+                logger.info(f"Course {course['course_id']} traitée")
             except Exception as e:
-                logger.error(f"Erreur lors du traitement de la course {course['course_id']}: {str(e)}")
+                logger.error(f"Erreur course {course['course_id']}: {str(e)}")
                 continue
 
         # 2. Exécution du dispatch
@@ -48,8 +55,7 @@ async def update_courses_and_dispatch(ds: PostgresDataSource, date_param: Option
         logger.error(f"Échec critique: {str(e)}", exc_info=True)
         raise
 
-async def main(date_param: Optional[str] = None) -> None:
-    """Point d'entrée principal"""
+async def main(date_param=None):
     ds = PostgresDataSource()
     try:
         await update_courses_and_dispatch(ds, date_param)
@@ -57,8 +63,6 @@ async def main(date_param: Optional[str] = None) -> None:
         await ds.close()
 
 if __name__ == "__main__":
-    import argparse
-    
     parser = argparse.ArgumentParser(description="Orchestrateur de traitement des courses")
     parser.add_argument("--date", 
                        help="Date de traitement au format YYYY-MM-DD",

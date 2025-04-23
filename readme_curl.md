@@ -1,0 +1,1 @@
+curl "https://maps.googleapis.com/maps/api/geocode/json?address=Paris&key=AIzaSyAQWAj6hmmEkt45CFPWu1fQCixxx_xxxx"

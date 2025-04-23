@@ -121,6 +121,16 @@ class PostgresDataSource(DataSource):
             await cur.execute(query, params)
             return await cur.fetchone()
 
+    async def fetch_one_dict(self, query: str, params=None) -> dict:
+        """Exécute une requête et retourne une seule ligne sous forme de dictionnaire."""
+        async with self.conn.cursor() as cur:
+            await cur.execute(query, params)
+            row = await cur.fetchone()
+            if not row:
+                return None  # Aucune ligne trouvée
+            columns = [col.name for col in cur.description]
+            return dict(zip(columns, row))
+
     async def close(self) -> None:
         """Ferme la connexion à la base de données."""
         if hasattr(self, "conn") and self.conn:
