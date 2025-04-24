@@ -8,6 +8,16 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Désactive complètement les logs de httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Désactive les logs DEBUG de la base de données
+logging.getLogger("app.db.postgres").setLevel(logging.WARNING)
+
+# Désactive les logs DEBUG de SQLAlchemy
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
 class CourseProcessor:
     def __init__(self, ds):
         self.ds = ds
@@ -200,9 +210,9 @@ class CourseProcessor:
                 'destination_lat': dest_coords['lat'],
                 'destination_lng': dest_coords['lng'],
                 'distance_vol_oiseau_km': distance_vol_oiseau,
-                'distance_routiere_km': float(route_details['distance_meters']) / 1000,
-                'duree_trajet_min': int(route_details['duration_seconds']) // 60,
-                'duree_trajet_secondes': int(route_details['duration_seconds']),
+                'distance_routiere_km': route_details['distance_meters'] / 1000,
+                'duree_trajet_min': route_details['duration_seconds'] / 60,
+                'duree_trajet_secondes': route_details['duration_seconds'],
                 'points_passage': route_details['waypoints'],
                 'points_passage_coords': route_details['waypoints_coords']
             }

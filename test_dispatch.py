@@ -5,6 +5,18 @@ from app.db.postgres import PostgresDataSource
 from app.core.course_processor import CourseProcessor
 from flask_app.dispatch import solve_dispatch_problem
 
+# Configuration globale
+logging.basicConfig(
+    level=logging.INFO,  # Niveau INFO (ignore DEBUG)
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+# Désactive les logs des bibliothèques externes et de la base de données
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+logging.getLogger("app.db.postgres").setLevel(logging.WARNING)  # Désactive les logs DEBUG de PostgreSQL
+
 logger = logging.getLogger(__name__)
 
 async def update_courses_and_dispatch(ds: PostgresDataSource, date_param: Optional[str] = None) -> None:
@@ -41,11 +53,16 @@ async def update_courses_and_dispatch(ds: PostgresDataSource, date_param: Option
                 continue
 
         # 2. Exécution du dispatch
-        logger.info("Lancement du dispatch...")
+        logger.info("Début de solve_dispatch_problem()")
+        
         await solve_dispatch_problem(ds, date_param)
         
+        # Log de succès
+        logger.info("solve_dispatch_problem() terminé avec succès")
+        
     except Exception as e:
-        logger.error(f"Échec critique: {str(e)}", exc_info=True)
+        # Log d'échec détaillé
+        logger.error(f"Échec critique dans solve_dispatch_problem(): {str(e)}", exc_info=True)
         raise
 
 async def main(date_param: Optional[str] = None) -> None:

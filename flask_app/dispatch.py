@@ -12,7 +12,7 @@ from app.db.postgres import PostgresDataSource
 from fastapi import HTTPException
 import httpx
 import hashlib
-from typing import Tuple
+from typing import Tuple, Optional
 from app.core.geocoding import geocoding_service
 from app.core.utils import generate_address_hash
 
@@ -149,9 +149,9 @@ def travel_time_single(chauffeur, groupe):
     """Calcule le temps de trajet ou échoue explicitement"""
     try:
         coords = {
-            'chauffeur': (chauffeur['lat_chauff'], chauffeur['long_chauff']),
-            'pickup': (groupe['lat_pickup'], groupe['long_pickup']),
-            'destination': (groupe['dest_lat'], groupe['dest_lng'])
+            'chauffeur': (float(chauffeur['lat_chauff']), float(chauffeur['long_chauff'])),
+            'pickup': (float(groupe['lat_pickup']), float(groupe['long_pickup'])),
+            'destination': (float(groupe['dest_lat']), float(groupe['dest_lng']))
         }
         
         # Validation finale
@@ -160,7 +160,7 @@ def travel_time_single(chauffeur, groupe):
                 raise ValueError(f"Coordonnée manquante ({name}) après géocodage")
 
         t1 = geodesic(coords['chauffeur'], coords['pickup']).kilometers
-        t2 = groupe['duree_trajet_min']
+        t2 = float(groupe['duree_trajet_min'])  # Conversion explicite
         t3 = geodesic(coords['destination'], coords['chauffeur']).kilometers
         
         return t1 + t2 + t3
@@ -471,8 +471,10 @@ def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing_assi
             for c in chauffeurs:
                 cost = solo_cost.get((g['id'], c['id']))
                 if cost is not None and driver_missions_count[c['id']] < 4:
-                    start_time = g['t_min']
-                    finish_time = start_time + cost
+                    logger.debug(f"Type de start_time: {type(g['t_min'])}, valeur: {g['t_min']}")
+                    logger.debug(f"Type de cost: {type(cost)}, valeur: {cost}")
+                    start_time = float(g['t_min'])  # Conversion explicite en float
+                    finish_time = start_time + float(cost)  # Conversion explicite en float
                     overlap = False
                     for (s, f) in driver_schedule[c['id']]:
                         if not (finish_time <= s or start_time >= f):
@@ -625,39 +627,55 @@ def groupes_non_couverts(assignments, groupes):
 # Intégration dans le flux principal
 # =============================================================================
 
-async def solve_dispatch_problem(ds: PostgresDataSource, date_param=None):
-    """Fonction principale pour résoudre le problème de dispatch"""
+async def solve_dispatch_problem(ds: PostgresDataSource, date_param: Optional[str] = None) -> None:
+    start_time = time.perf_counter()
+    logger.info("Démarrage du dispatch...")
+    
     try:
-        # 1. Vérification des coordonnées
-        await verify_and_complete_coordinates(ds)
-
-        # 2. Récupération des données
+        logger.debug("Début de solve_dispatch_problem - Récupération des données")
+        
+        # 1. Récupération des données
         groupes = await prepare_demandes(ds, date_param)
+        logger.info(f"Nombre de groupes à traiter : {len(groupes)}")
+        
         chauffeurs = await prepare_chauffeurs(ds, date_param)
+        logger.info(f"Nombre de chauffeurs disponibles : {len(chauffeurs)}")
 
-        # Validation du format des données
-        if not groupes or not isinstance(groupes[0], dict):
-            raise ValueError("Données des groupes invalides")
-        if not chauffeurs or not isinstance(chauffeurs[0], dict):
-            raise ValueError("Données des chauffeurs invalides")
-
-        # 3. Calcul des coûts
+        # 2. Calcul des coûts
+        logger.debug("Calcul des coûts...")
         solo_cost = {
             (g['id'], c['id']): travel_time_single(c, g)
             for g in groupes
             for c in chauffeurs
         }
         
-        # ... (reste du code)
+        combo_cost = {
+            (g1['id'], g2['id'], c['id']): combined_route_cost(c, g1, g2)
+            for g1 in groupes
+            for g2 in groupes
+            for c in chauffeurs
+            if g1['id'] < g2['id']
+        }
+        
+        # 3. Résolution du dispatch
+        logger.info("Lancement de l'algorithme de dispatch...")
+        assignments = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost)
+        logger.info(f"Dispatch terminé - {len(assignments)} affectations générées")
 
-    except ValueError as e:
-        logger.error(f"ARRÊT IMMÉDIAT : {e}")
-        raise  # Interrompt l'exécution
+        # 4. Sauvegarde des affectations dans la base de données
+        logger.info("Sauvegarde des affectations dans la table chauffeurAffectation...")
+        logger.info(f"Structure des affectations avant sauvegarde : {assignments}")
+        await save_affectations(ds, assignments)
+
+        duration = time.perf_counter() - start_time
+        logger.info(f"Dispatch terminé en {duration:.2f} secondes")
+        return assignments
+        
     except Exception as e:
-        logger.error(f"Erreur inattendue : {str(e)}")
+        logger.error(f"Échec après {time.perf_counter() - start_time:.2f} secondes", exc_info=True)
         raise
 
-async def save_affectations(ds: PostgresDataSource, affectations):
+async def save_affectations(ds: PostgresDataSource, assignments):
     """Sauvegarde les affectations dans la base de données"""
     query = """
         INSERT INTO chauffeurAffectation (
@@ -671,12 +689,18 @@ async def save_affectations(ds: PostgresDataSource, affectations):
         SET statut_affectation = EXCLUDED.statut_affectation
     """
     
-    for affectation in affectations:
-        await ds.execute_transaction([(query, {
-            "groupe_id": affectation["groupe_id"],
-            "chauffeur_id": affectation["chauffeur_id"],
-            "statut": affectation["statut"]
-        })])
+    # Parcourir le dictionnaire assignments (clé = groupe_id, valeur = liste d'affectations)
+    for groupe_id, affectations in assignments.items():
+        for affectation in affectations:
+            # Vérifier que affectation est un dictionnaire avec les clés attendues
+            if isinstance(affectation, dict) and "chauffeur" in affectation:
+                await ds.execute_transaction([(query, {
+                    "groupe_id": groupe_id,  # Utiliser l'ID du groupe comme clé
+                    "chauffeur_id": affectation["chauffeur"],
+                    "statut": "affecté"  # Valeur par défaut, à adapter si nécessaire
+                })])
+            else:
+                logger.warning(f"Format d'affectation invalide pour le groupe {groupe_id}: {affectation}")
 
 async def verify_and_complete_coordinates(ds: PostgresDataSource):
     """Version utilisant uniquement le service de géocodage"""

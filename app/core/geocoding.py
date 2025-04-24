@@ -10,9 +10,9 @@ import app.core.config as config  # Nouvel import
 reload(config)
 from app.core.config import settings
 
-logging.basicConfig(level=logging.DEBUG, force=True)  # `force=True` écrase les configurations existantes
+logging.basicConfig(level=logging.INFO, force=True)  # Niveau INFO
 logger = logging.getLogger("httpx")
-logger.setLevel(logging.DEBUG)               # Niveau spécifique au logger httpx
+logger.setLevel(logging.WARNING)  # Désactive les logs de requêtes HTTP
 
 # Supprimez les handlers existants (évite les doublons)
 logger.handlers.clear()
