@@ -15,6 +15,7 @@ import hashlib
 from typing import Tuple, Optional, List, Dict, Any
 from app.core.geocoding import geocoding_service
 from app.core.utils import generate_address_hash
+from decimal import Decimal  # Ensure this import exists at the top of the file
 
 # Configuration du logging
 logging.basicConfig(
@@ -247,7 +248,7 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
     query = """
         SELECT 
             c.course_id as id,
-            c.nombre_personne as n,
+            c.nombre_personne as ng,
             c.lieu_prise_en_charge as pickup_address,
             c.destination as dropoff_address,
             ag_pickup.latitude as lat_pickup,
@@ -305,6 +306,13 @@ async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
         WHERE c.actif = true
     """
+
+#    if date:
+#        query += " AND DATE(dc.date_debut) <= %(date)s AND DATE(dc.date_fin) >= %(date)s"
+    
+    if date:
+        query += " AND DATE(dc.date_debut) = %(date)s"
+
     rows = await ds.fetch_all(query, {"date": date} if date else {})
     
     # Conversion explicite en list[dict]
@@ -356,7 +364,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
             solo_cap = pulp.lpSum(c['n'] * x[(g['id'], c['id'])] for c in chauffeurs if (g['id'], c['id']) in x)
             comb_cap = pulp.lpSum(0.5 * chauffeur_capacity[c_id] * var
                                 for (g1_id, g2_id, c_id), var in y.items() if g['id'] in [g1_id, g2_id])
-            prob += solo_cap + comb_cap >= g['N'], f"Couverture_{g['id']}"
+            prob += solo_cap + comb_cap >= g['ng'], f"Couverture_{g['id']}"
 
         # Contrainte de minimalité des affectations multiples
         M_big = 1e4
@@ -380,7 +388,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
                         term_combo = k['n'] * pulp.lpSum(var for key, var in y.items()
                                                         if key[2] == k['id'] and (key[0] == g['id'] or key[1] == g['id']))
                         expr.append(term_solo + term_combo)
-                prob += pulp.lpSum(expr) <= g['N'] - 1 + M_big * (1 - z[(g['id'], c['id'])]), f"Minimalite_{g['id']}_{c['id']}"
+                prob += pulp.lpSum(expr) <= g['ng'] - 1 + M_big * (1 - z[(g['id'], c['id'])]), f"Minimalite_{g['id']}_{c['id']}"
 
         # Contrainte de non-chevauchement et limite des missions par chauffeur
         for c in chauffeurs:
@@ -389,7 +397,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
                 if (g['id'], c['id']) in x:
                     T_start = g['t_min']
                     t_single = solo_cost[(g['id'], c['id'])]
-                    T_finish = T_start + t_single
+                    T_finish = T_start + Decimal(str(t_single))  # Convert t_single to Decimal
                     candidate_list.append((("solo", g['id'], c['id']), T_start, T_finish, x[(g['id'], c['id'])]))
             for key, var in y.items():
                 if key[2] == c['id']:
@@ -412,7 +420,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
 
         # Contrainte supplémentaire sur la capacité pour groupes de faible demande
         for g in groupes:
-            if g['N'] <= 4:
+            if g['ng'] <= 4:
                 for c in chauffeurs:
                     if c['n'] > 4 and (g['id'], c['id']) in x:
                         prob += x[(g['id'], c['id'])] == 0, f"Capacite_minimale_solo_{g['id']}_{c['id']}"
@@ -421,7 +429,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
             g1 = next(g for g in groupes if g['id'] == key[0])
             g2 = next(g for g in groupes if g['id'] == key[1])
             c  = next(ch for ch in chauffeurs if ch['id'] == key[2])
-            if (g1['N'] <= 3 or g2['N'] <= 3) and c['n'] > 4:
+            if (g1['ng'] <= 3 or g2['ng'] <= 3) and c['n'] > 4:
                 prob += var == 0, f"Capacite_minimale_combo_{key[0]}_{key[1]}_{key[2]}"
 
         solver = pulp.PULP_CBC_CMD(timeLimit=time_limit, msg=True)
@@ -641,9 +649,13 @@ async def solve_dispatch_problem(
         # 1. Récupération des données
         groupes = await prepare_demandes(ds, date_param)
         logger.info(f"Nombre de groupes à traiter : {len(groupes)}")
+
+        #print("groupes" , groupes)
         
         chauffeurs = await prepare_chauffeurs(ds, date_param)
         logger.info(f"Nombre de chauffeurs disponibles : {len(chauffeurs)}")
+
+        #print("chauffeurs" , chauffeurs)
 
         # 2. Calcul des coûts
         logger.debug("Calcul des coûts...")
