@@ -16,6 +16,7 @@ from typing import Tuple, Optional, List, Dict, Any
 from app.core.geocoding import geocoding_service
 from app.core.utils import generate_address_hash
 from decimal import Decimal  # Ensure this import exists at the top of the file
+import json
 
 # Configuration du logging
 logging.basicConfig(
@@ -723,31 +724,151 @@ async def solve_dispatch_problem(
         raise
 
 async def save_affectations(ds: PostgresDataSource, assignments):
-    """Sauvegarde les affectations dans la base de données"""
-    query = """
-        INSERT INTO chauffeurAffectation (
-            groupe_id, chauffeur_id, statut_affectation, 
-            date_created, date_accepted, date_done
-        ) VALUES (
-            %(groupe_id)s, %(chauffeur_id)s, %(statut)s,
-            NOW(), NULL, NULL
-        )
-        ON CONFLICT (groupe_id, chauffeur_id) DO UPDATE
-        SET statut_affectation = EXCLUDED.statut_affectation
-    """
-    
-    # Parcourir le dictionnaire assignments (clé = groupe_id, valeur = liste d'affectations)
-    for groupe_id, affectations in assignments.items():
-        for affectation in affectations:
-            # Vérifier que affectation est un dictionnaire avec les clés attendues
-            if isinstance(affectation, dict) and "chauffeur" in affectation:
-                await ds.execute_transaction([(query, {
-                    "groupe_id": groupe_id,  # Utiliser l'ID du groupe comme clé
-                    "chauffeur_id": affectation["chauffeur"],
-                    "statut": "affecté"  # Valeur par défaut, à adapter si nécessaire
+    """Sauvegarde les affectations dans les tables courseGroupe et chauffeurAffectation"""
+    try:
+        # 1. Sauvegarde dans courseGroupe
+        course_groupe_query = """
+            INSERT INTO courseGroupe (
+                groupe_id, lieu_prise_en_charge_list, destination_list,
+                date_heure_prise_en_charge_list, nombre_personne, vip
+            ) VALUES (
+                %(groupe_id)s, %(lieu_prise_en_charge)s, %(destination)s,
+                %(date_heure_prise_en_charge)s, %(nombre_personne)s, %(vip)s
+            )
+            ON CONFLICT (groupe_id) DO UPDATE
+            SET 
+                lieu_prise_en_charge_list = EXCLUDED.lieu_prise_en_charge_list,
+                destination_list = EXCLUDED.destination_list,
+                date_heure_prise_en_charge_list = EXCLUDED.date_heure_prise_en_charge_list,
+                nombre_personne = EXCLUDED.nombre_personne,
+                vip = EXCLUDED.vip
+        """
+
+        # 2. Sauvegarde dans chauffeurAffectation
+        chauffeur_affectation_query = """
+            INSERT INTO chauffeurAffectation (
+                groupe_id, chauffeur_id, statut_affectation, date_created,
+                partager_avec_chauffeur_json, combiner_avec_groupe_id,
+                course_combinee_id, course_combinee, course_partagee,
+                nombre_personne_prise_en_charge, passagers_json,
+                duree_trajet_min, details_course_combinee_json
+            ) VALUES (
+                %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW(),
+                %(partager_avec_chauffeur_json)s, %(combiner_avec_groupe_id)s,
+                %(course_combinee_id)s, %(course_combinee)s, %(course_partagee)s,
+                %(nombre_personne_prise_en_charge)s, %(passagers_json)s,
+                %(duree_trajet_min)s, %(details_course_combinee_json)s
+            )
+            ON CONFLICT (groupe_id, chauffeur_id) DO UPDATE
+            SET 
+                statut_affectation = EXCLUDED.statut_affectation,
+                partager_avec_chauffeur_json = EXCLUDED.partager_avec_chauffeur_json,
+                combiner_avec_groupe_id = EXCLUDED.combiner_avec_groupe_id,
+                course_combinee_id = EXCLUDED.course_combinee_id,
+                course_combinee = EXCLUDED.course_combinee,
+                course_partagee = EXCLUDED.course_partagee,
+                nombre_personne_prise_en_charge = EXCLUDED.nombre_personne_prise_en_charge,
+                passagers_json = EXCLUDED.passagers_json,
+                duree_trajet_min = EXCLUDED.duree_trajet_min,
+                details_course_combinee_json = EXCLUDED.details_course_combinee_json
+        """
+
+        # 3. Récupération des informations des chauffeurs
+        chauffeurs_info = await ds.fetch_all("""
+            SELECT chauffeur_id, prenom_nom, nombre_place, telephone
+            FROM chauffeur
+        """)
+        chauffeurs_dict = {ch['chauffeur_id']: ch for ch in chauffeurs_info}
+
+        # 4. Récupération des informations des courses
+        courses_info = await ds.fetch_all("""
+            SELECT c.course_id, c.groupe_id, c.prenom_nom, c.telephone, c.num_vol,
+                   c.date_heure_prise_en_charge, c.lieu_prise_en_charge, c.destination,
+                   c.nombre_personne, cc.duree_trajet_min
+            FROM course c
+            LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
+        """)
+        courses_dict = {c['groupe_id']: c for c in courses_info}
+
+        # 5. Traitement des affectations
+        for groupe_id, affectations in assignments.items():
+            # Récupération des informations de la course
+            course_info = courses_dict.get(groupe_id, {})
+            
+            # Insertion dans courseGroupe
+            await ds.execute_transaction([(course_groupe_query, {
+                "groupe_id": groupe_id,
+                "lieu_prise_en_charge": course_info.get('lieu_prise_en_charge', ''),
+                "destination": course_info.get('destination', ''),
+                "date_heure_prise_en_charge": course_info.get('date_heure_prise_en_charge'),
+                "nombre_personne": course_info.get('nombre_personne', 0),
+                "vip": False  # À adapter selon vos besoins
+            })])
+
+            # Préparation des données pour chauffeurAffectation
+            chauffeurs_du_groupe = []
+            for affectation in affectations:
+                chauffeur_id = affectation.get('chauffeur')
+                if chauffeur_id:
+                    chauffeurs_du_groupe.append(chauffeur_id)
+
+            # Insertion des affectations
+            for affectation in affectations:
+                chauffeur_id = affectation.get('chauffeur')
+                if not chauffeur_id:
+                    continue
+
+                chauffeur_info = chauffeurs_dict.get(chauffeur_id, {})
+                
+                # Préparation des données partagées
+                partager_avec = []
+                for other_chauffeur_id in chauffeurs_du_groupe:
+                    if other_chauffeur_id != chauffeur_id:
+                        other_chauffeur = chauffeurs_dict.get(other_chauffeur_id, {})
+                        partager_avec.append({
+                            'prenom_nom': other_chauffeur.get('prenom_nom', ''),
+                            'telephone': other_chauffeur.get('telephone', ''),
+                            'nombre_place': other_chauffeur.get('nombre_place', 0)
+                        })
+
+                # Préparation des détails de la course combinée
+                details_course_combinee = None
+                if affectation.get('combiné_avec'):
+                    combined_course_info = courses_dict.get(affectation['combiné_avec'][0], {})
+                    details_course_combinee = {
+                        'groupe_id': affectation['combiné_avec'][0],
+                        'lieu_prise_en_charge': combined_course_info.get('lieu_prise_en_charge', ''),
+                        'destination': combined_course_info.get('destination', ''),
+                        'date_heure_prise_en_charge': combined_course_info.get('date_heure_prise_en_charge'),
+                        'nombre_personne': combined_course_info.get('nombre_personne', 0)
+                    }
+
+                # Préparation des informations des passagers
+                passagers = {
+                    'prenom_nom': course_info.get('prenom_nom', ''),
+                    'telephone': course_info.get('telephone', ''),
+                    'num_vol': course_info.get('num_vol', '')
+                }
+
+                # Insertion dans chauffeurAffectation
+                await ds.execute_transaction([(chauffeur_affectation_query, {
+                    "groupe_id": groupe_id,
+                    "chauffeur_id": chauffeur_id,
+                    "statut": "pending",
+                    "partager_avec_chauffeur_json": json.dumps(partager_avec) if partager_avec else None,
+                    "combiner_avec_groupe_id": affectation.get('combiné_avec', None),
+                    "course_combinee_id": affectation.get('combo_id', None),
+                    "course_combinee": bool(affectation.get('combiné_avec')),
+                    "course_partagee": len(chauffeurs_du_groupe) > 1,
+                    "nombre_personne_prise_en_charge": course_info.get('nombre_personne', 0),
+                    "passagers_json": json.dumps(passagers),
+                    "duree_trajet_min": course_info.get('duree_trajet_min', 0),
+                    "details_course_combinee_json": json.dumps(details_course_combinee) if details_course_combinee else None
                 })])
-            else:
-                logger.warning(f"Format d'affectation invalide pour le groupe {groupe_id}: {affectation}")
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la sauvegarde des affectations: {str(e)}")
+        raise
 
 async def verify_and_complete_coordinates(ds: PostgresDataSource):
     """Version utilisant uniquement le service de géocodage"""
