@@ -747,7 +747,7 @@ async def solve_dispatch_problem(
         raise
 
 async def save_affectations(ds: PostgresDataSource, assignments):
-    """Sauvegarde les affectations dans les tables courseGroupe et chauffeurAffectation"""
+    """Sauvegarde les affectations dans les tables courseGroupe et chauffeurAffectation, puis met à jour les champs calculés."""
     try:
         # 1. Sauvegarde dans courseGroupe
         course_groupe_query = """
@@ -767,127 +767,160 @@ async def save_affectations(ds: PostgresDataSource, assignments):
                 vip = EXCLUDED.vip
         """
 
-        # 2. Sauvegarde dans chauffeurAffectation
+        # 2. Sauvegarde dans chauffeurAffectation (champs de base uniquement)
         chauffeur_affectation_query = """
             INSERT INTO chauffeurAffectation (
-                groupe_id, chauffeur_id, statut_affectation, date_created,
-                partager_avec_chauffeur_json, combiner_avec_groupe_id,
-                course_combinee_id, course_combinee, course_partagee,
-                nombre_personne_prise_en_charge, passagers_json,
-                duree_trajet_min, details_course_combinee_json
+                groupe_id, chauffeur_id, statut_affectation, date_created
             ) VALUES (
-                %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW(),
-                %(partager_avec_chauffeur_json)s, %(combiner_avec_groupe_id)s,
-                %(course_combinee_id)s, %(course_combinee)s, %(course_partagee)s,
-                %(nombre_personne_prise_en_charge)s, %(passagers_json)s,
-                %(duree_trajet_min)s, %(details_course_combinee_json)s
+                %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW()
             )
             ON CONFLICT (groupe_id, chauffeur_id) DO UPDATE
             SET 
-                statut_affectation = EXCLUDED.statut_affectation,
-                partager_avec_chauffeur_json = EXCLUDED.partager_avec_chauffeur_json,
-                combiner_avec_groupe_id = EXCLUDED.combiner_avec_groupe_id,
-                course_combinee_id = EXCLUDED.course_combinee_id,
-                course_combinee = EXCLUDED.course_combinee,
-                course_partagee = EXCLUDED.course_partagee,
-                nombre_personne_prise_en_charge = EXCLUDED.nombre_personne_prise_en_charge,
-                passagers_json = EXCLUDED.passagers_json,
-                duree_trajet_min = EXCLUDED.duree_trajet_min,
-                details_course_combinee_json = EXCLUDED.details_course_combinee_json
+                statut_affectation = EXCLUDED.statut_affectation
         """
-
-        # 3. Récupération des informations des chauffeurs
-        chauffeurs_info = await ds.fetch_all("""
-            SELECT chauffeur_id, prenom_nom, nombre_place, telephone
-            FROM chauffeur
-        """)
-        chauffeurs_dict = {ch['chauffeur_id']: ch for ch in chauffeurs_info}
-
-        # 4. Récupération des informations des courses
+        print("list(assignments.keys()" , list(assignments.keys()))
+        # 3. Récupération des informations des courses
         courses_info = await ds.fetch_all("""
             SELECT c.course_id, c.groupe_id, c.prenom_nom, c.telephone, c.num_vol,
-                   c.date_heure_prise_en_charge, c.lieu_prise_en_charge, c.destination,
-                   c.nombre_personne, cc.duree_trajet_min
+                c.date_heure_prise_en_charge, c.lieu_prise_en_charge, c.destination,
+                c.nombre_personne, cc.duree_trajet_min
             FROM course c
             LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-        """)
+            WHERE c.groupe_id = ANY(%(groupes_ids)s)
+        """, {
+            "groupes_ids": list(assignments.keys())
+        })
         courses_dict = {c['groupe_id']: c for c in courses_info}
 
-        # 5. Traitement des affectations
+        print("courses_dict" , courses_dict)
+
+        groupes_concernes = []
+
+        # 4. Traitement des affectations
         for groupe_id, affectations in assignments.items():
-            # Récupération des informations de la course
             course_info = courses_dict.get(groupe_id, {})
+            groupes_concernes.append(groupe_id)
             
+            print("course_info.get('lieu_prise_en_charge')" , course_info.get('lieu_prise_en_charge'))
+            print("course_info.get('destination')" , course_info.get('destination'))
+            print("course_info.get('date_heure_prise_en_charge')" , course_info.get('date_heure_prise_en_charge'))
+            print("course_info.get('nombre_personne')" , course_info.get('nombre_personne'))
+            print("course_info['nombre_personne']" , course_info['nombre_personne'])
             # Insertion dans courseGroupe
             await ds.execute_transaction([(course_groupe_query, {
                 "groupe_id": groupe_id,
                 "lieu_prise_en_charge": course_info.get('lieu_prise_en_charge', ''),
                 "destination": course_info.get('destination', ''),
                 "date_heure_prise_en_charge": course_info.get('date_heure_prise_en_charge'),
-                "nombre_personne": course_info.get('nombre_personne', 0),
+                "nombre_personne": course_info.get('nombre_personne'),
                 "vip": False  # À adapter selon vos besoins
             })])
 
-            # Préparation des données pour chauffeurAffectation
-            chauffeurs_du_groupe = []
-            for affectation in affectations:
-                chauffeur_id = affectation.get('chauffeur')
-                if chauffeur_id:
-                    chauffeurs_du_groupe.append(chauffeur_id)
-
-            # Insertion des affectations
+            # Insertion des affectations de base
             for affectation in affectations:
                 chauffeur_id = affectation.get('chauffeur')
                 if not chauffeur_id:
                     continue
-
-                chauffeur_info = chauffeurs_dict.get(chauffeur_id, {})
-                
-                # Préparation des données partagées
-                partager_avec = []
-                for other_chauffeur_id in chauffeurs_du_groupe:
-                    if other_chauffeur_id != chauffeur_id:
-                        other_chauffeur = chauffeurs_dict.get(other_chauffeur_id, {})
-                        partager_avec.append({
-                            'prenom_nom': other_chauffeur.get('prenom_nom', ''),
-                            'telephone': other_chauffeur.get('telephone', ''),
-                            'nombre_place': other_chauffeur.get('nombre_place', 0)
-                        })
-
-                # Préparation des détails de la course combinée
-                details_course_combinee = None
-                if affectation.get('combiné_avec'):
-                    combined_course_info = courses_dict.get(affectation['combiné_avec'][0], {})
-                    details_course_combinee = {
-                        'groupe_id': affectation['combiné_avec'][0],
-                        'lieu_prise_en_charge': combined_course_info.get('lieu_prise_en_charge', ''),
-                        'destination': combined_course_info.get('destination', ''),
-                        'date_heure_prise_en_charge': combined_course_info.get('date_heure_prise_en_charge'),
-                        'nombre_personne': combined_course_info.get('nombre_personne', 0)
-                    }
-
-                # Préparation des informations des passagers
-                passagers = {
-                    'prenom_nom': course_info.get('prenom_nom', ''),
-                    'telephone': course_info.get('telephone', ''),
-                    'num_vol': course_info.get('num_vol', '')
-                }
-
-                # Insertion dans chauffeurAffectation
+                print("groupe_id , chauffeur_id " , groupe_id ,chauffeur_id)
                 await ds.execute_transaction([(chauffeur_affectation_query, {
                     "groupe_id": groupe_id,
                     "chauffeur_id": chauffeur_id,
-                    "statut": "pending",
-                    "partager_avec_chauffeur_json": json.dumps(partager_avec) if partager_avec else None,
-                    "combiner_avec_groupe_id": affectation.get('combiné_avec', None),
-                    "course_combinee_id": affectation.get('combo_id', None),
-                    "course_combinee": bool(affectation.get('combiné_avec')),
-                    "course_partagee": len(chauffeurs_du_groupe) > 1,
-                    "nombre_personne_prise_en_charge": course_info.get('nombre_personne', 0),
-                    "passagers_json": json.dumps(passagers),
-                    "duree_trajet_min": course_info.get('duree_trajet_min', 0),
-                    "details_course_combinee_json": json.dumps(details_course_combinee) if details_course_combinee else None
+                    "statut": "draft"
                 })])
+        print("groupes_concernes" , groupes_concernes)  
+        # 5. Mise à jour des champs calculés pour les groupes concernés
+        if groupes_concernes:
+            await ds.execute_transaction([(
+                f"""
+                UPDATE chauffeurAffectation ca
+                SET 
+                    nombre_personne_prise_en_charge = (
+                        SELECT cg.nombre_personne 
+                        FROM courseGroupe cg 
+                        WHERE cg.groupe_id = ca.groupe_id
+                    ),
+                    prenom_nom_chauffeur = (
+                        SELECT ch.prenom_nom 
+                        FROM chauffeur ch 
+                        WHERE ch.chauffeur_id = ca.chauffeur_id
+                    ),
+                    nombre_place_chauffeur = (
+                        SELECT ch.nombre_place 
+                        FROM chauffeur ch 
+                        WHERE ch.chauffeur_id = ca.chauffeur_id
+                    ),
+                    telephone_chauffeur = (
+                        SELECT ch.telephone 
+                        FROM chauffeur ch 
+                        WHERE ch.chauffeur_id = ca.chauffeur_id
+                    ),
+                    partager_avec_chauffeur_json = (
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'prenom_nom', ch2.prenom_nom,
+                                'telephone', ch2.telephone,
+                                'nombre_place', ch2.nombre_place
+                            )
+                        )
+                        FROM chauffeurAffectation ca2
+                        JOIN chauffeur ch2 ON ca2.chauffeur_id = ch2.chauffeur_id
+                        WHERE ca2.groupe_id = ca.groupe_id 
+                        AND ca2.chauffeur_id != ca.chauffeur_id
+                    ),
+                    course_partagee = (
+                        SELECT COUNT(*) > 1
+                        FROM chauffeurAffectation ca2
+                        WHERE ca2.groupe_id = ca.groupe_id
+                    ),
+                    passagers_json = (
+                        SELECT jsonb_agg(
+                            DISTINCT jsonb_build_object(
+                                'prenom_nom', co.prenom_nom,
+                                'telephone', co.telephone,
+                                'num_vol', COALESCE(co.num_vol, 'N/A'),
+                                'nombre_personne', co.nombre_personne,
+                                'date_heure_prise_en_charge', co.date_heure_prise_en_charge,
+                                'lieu_prise_en_charge', co.lieu_prise_en_charge,
+                                'destination', co.destination,
+                                'groupe_id', co.groupe_id
+                            )
+                        )
+                        FROM course co
+                        WHERE co.groupe_id = ca.groupe_id
+                    ),
+                    course_combinee = (
+                        SELECT COUNT(c.*) > 0
+                        FROM course c
+                        WHERE c.groupe_id IN (
+                            SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                        )
+                    ),
+                    details_course_combinee_json = (
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'prenom_nom', c.prenom_nom,
+                                'telephone', c.telephone,
+                                'numero_vol', COALESCE(c.num_vol, 'N/A'),
+                                'heure_prise_en_charge', c.date_heure_prise_en_charge,
+                                'lieu_prise_en_charge', c.lieu_prise_en_charge,
+                                'destination', c.destination,
+                                'groupe_id', c.groupe_id
+                            )
+                        )
+                        FROM course c
+                        WHERE c.groupe_id IN (
+                            SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                        )
+                    ),
+                    vip = (
+                        SELECT cg.vip 
+                        FROM courseGroupe cg 
+                        WHERE cg.groupe_id = ca.groupe_id
+                    )
+                WHERE ca.groupe_id = ANY(%(groupes)s)
+                """,
+                {"groupes": groupes_concernes}
+            )])
 
     except Exception as e:
         logger.error(f"Erreur lors de la sauvegarde des affectations: {str(e)}")

@@ -76,3 +76,14 @@ docker stop  affectionate_turing
 ```
 
 Cela enverra un signal `SIGTERM` au conteneur, puis un `SIGKILL` après un délai de grâce (par défaut 10 secondes).
+
+Une fois la correction apportée, relancez le conteneur avec :
+   docker restart <container_id_ou_nom>
+Pour déboguer :
+Consulter les logs :
+Utilisez la commande suivante pour voir les logs du conteneur :
+  docker logs <container_id_ou_nom>
+Accéder au shell du conteneur :
+Si vous avez besoin d'inspecter les fichiers ou d'exécuter des commandes à l'intérieur du conteneur :
+  docker exec -it <container_id_ou_nom> /bin/bash
+
