@@ -26,7 +26,7 @@ docker build -t fastapi-app . && docker run --env-file .env -p 8080:8080 fastapi
 
 docker exec -it 1e572707f5e7623e14b69b448283b5390cb6f1fa66aa221ed2bfa45ba4700ff4 bash
 
- docker exec -it sad_lehmann bash
+docker exec -it sad_lehmann bash
 
 docker ps --filter "status=running"  # Ne montre que les conteneurs en cours d'exécution.
 
@@ -50,6 +50,29 @@ docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Status}}" | grep -E "fast[^
 
 docker logs [NOM_DU_CONTENEUR]  # Voir les logs
 docker exec -it [NOM_DU_CONTENEUR] bash  # Entrer dans le conteneur
+
+
+Pour arrêter un conteneur Docker en cours d'exécution, vous pouvez utiliser la commande suivante :
+
+```bash
+#docker kill <container_id_ou_nom>
+docker stop  affectionate_turing
 ```
 
+Remplacez `<container_id_ou_nom>` par l'ID ou le nom du conteneur que vous souhaitez arrêter. Vous pouvez obtenir l'ID ou le nom du conteneur en utilisant la commande :
 
+```bash
+docker ps
+```
+
+Cette commande liste tous les conteneurs en cours d'exécution.
+
+Si vous préférez arrêter le conteneur de manière plus propre (en lui donnant le temps de terminer ses processus), utilisez :
+
+```bash
+#docker stop <container_id_ou_nom>
+
+docker stop  affectionate_turing
+```
+
+Cela enverra un signal `SIGTERM` au conteneur, puis un `SIGKILL` après un délai de grâce (par défaut 10 secondes).

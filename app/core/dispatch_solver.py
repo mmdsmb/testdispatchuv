@@ -244,7 +244,7 @@ def combined_route_cost(chauffeur, g1, g2):
 # Lecture et préparation des données (version PostgresDataSource)
 # =============================================================================
 
-async def prepare_demandes(ds: PostgresDataSource, date=None):
+async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
     """Récupère les courses avec calcul des distances en Python (sans SQL geodesic)"""
     query = """
         SELECT 
@@ -258,16 +258,24 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
             ag_dest.longitude as dest_lng,
             c.date_heure_prise_en_charge,
             EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
-            cc.duree_trajet_min  -- Récupération depuis coursecalcul
+            cc.duree_trajet_min
         FROM course c
         JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
         JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
         LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
     """
-    if date:
-        query += " WHERE DATE(c.date_heure_prise_en_charge) = %(date)s"
+    if date_begin and date_end:
+        query += " WHERE c.date_heure_prise_en_charge BETWEEN %(date_begin)s AND %(date_end)s"
+    elif date_begin:
+        query += " WHERE c.date_heure_prise_en_charge >= %(date_begin)s"
+    elif date_end:
+        query += " WHERE c.date_heure_prise_en_charge <= %(date_end)s"
     
-    rows = await ds.fetch_all(query, {"date": date} if date else {})
+    rows = await ds.fetch_all(query, {
+        "date_begin": date_begin,
+        "date_end": date_end
+    } if date_begin or date_end else {})
+    
     if not rows:
         raise ValueError("Aucune course valide après vérification des coordonnées")
     
@@ -291,8 +299,8 @@ async def prepare_demandes(ds: PostgresDataSource, date=None):
     
     return demandes
 
-async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
-    """Récupère et prépare les chauffeurs disponibles"""
+async def prepare_chauffeurs(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
+    """Récupère et prépare les chauffeurs disponibles pour une période donnée"""
     query = """
         SELECT 
             c.chauffeur_id as id,
@@ -308,19 +316,30 @@ async def prepare_chauffeurs(ds: PostgresDataSource, date=None):
         WHERE c.actif = true
     """
 
-#    if date:
-#        query += " AND DATE(dc.date_debut) <= %(date)s AND DATE(dc.date_fin) >= %(date)s"
+    params = {}
     
-    if date:
-        query += " AND DATE(dc.date_debut) = %(date)s"
+    if date_begin and date_end:
+        query += " AND dc.date_debut <= %(date_end)s AND dc.date_fin >= %(date_begin)s"
+        params.update({"date_begin": date_begin, "date_end": date_end})
+    elif date_begin:
+        query += " AND dc.date_fin >= %(date_begin)s"
+        params.update({"date_begin": date_begin})
+    elif date_end:
+        query += " AND dc.date_debut <= %(date_end)s"
+        params.update({"date_end": date_end})
 
-    rows = await ds.fetch_all(query, {"date": date} if date else {})
+    rows = await ds.fetch_all(query, params)
     
-    # Conversion explicite en list[dict]
-    if not rows or isinstance(rows[0], str):
-        raise ValueError("Données des chauffeurs mal formatées")
+    if not rows:
+        logger.warning("Aucun chauffeur disponible pour la période spécifiée")
+        return []
+        
+    # Convertir les rows en list[dict] si ce n'est pas déjà le cas
+    if isinstance(rows, list) and len(rows) > 0 and not isinstance(rows[0], dict):
+        columns = ['id', 'n', 'prenom_nom', 'lat_chauff', 'long_chauff', 'availability_date', 'availability_date_end']
+        rows = [dict(zip(columns, row)) for row in rows]
     
-    return rows  # Supposé déjà être une list[dict]
+    return rows
 
 # =============================================================================
 # Précalcul des coûts pour améliorer la performance
@@ -637,7 +656,8 @@ def groupes_non_couverts(assignments, groupes):
 
 async def solve_dispatch_problem(
     ds: PostgresDataSource, 
-    date_param: Optional[str] = None,
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
     milp_time_limit: int = 300  # Paramètre configurable pour le timeout MILP
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -648,12 +668,12 @@ async def solve_dispatch_problem(
     
     try:
         # 1. Récupération des données
-        groupes = await prepare_demandes(ds, date_param)
+        groupes = await prepare_demandes(ds, date_begin, date_end)
         logger.info(f"Nombre de groupes à traiter : {len(groupes)}")
 
         #print("groupes" , groupes)
         
-        chauffeurs = await prepare_chauffeurs(ds, date_param)
+        chauffeurs = await prepare_chauffeurs(ds, date_begin, date_end)
         logger.info(f"Nombre de chauffeurs disponibles : {len(chauffeurs)}")
 
         #print("chauffeurs" , chauffeurs)
@@ -687,7 +707,8 @@ async def solve_dispatch_problem(
         # 3. Résolution MILP initiale
         logger.info(f"Lancement MILP (timeout={milp_time_limit}s)")
         prob, status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-        milp_optimal = (status == "Optimal")
+        milp_optimal = (pulp.LpStatus[status] == "Optimal")
+        #milp_optimal = (status == "Optimal")
         
         if milp_optimal:
             assignments = extract_assignments(groupes, chauffeurs, x, y)
@@ -701,8 +722,10 @@ async def solve_dispatch_problem(
         if non_couverts:
             logger.warning(f"{len(non_couverts)} groupes non couverts, retraitement")
             prob_nc, status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-            
-            if status_nc == "Optimal":
+            milp_optimal_nc = (pulp.LpStatus[status_nc] == "Optimal")
+            #milp_optimal_nc = (status_nc == "Optimal")
+            logger.info(f"Solution MILP  , retraitement GROUPES NON COUVERTS : {milp_optimal_nc}")
+            if milp_optimal_nc:
                 nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
             else:
                 nc_assignments = heuristic_solution(non_couverts, chauffeurs, solo_cost, combo_cost)

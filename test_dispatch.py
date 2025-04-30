@@ -4,6 +4,7 @@ from typing import Optional
 from app.db.postgres import PostgresDataSource
 from app.core.course_processor import CourseProcessor
 from app.core.dispatch_solver import solve_dispatch_problem
+from datetime import datetime
 
 # Configuration globale
 logging.basicConfig(
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 async def update_courses_and_dispatch(
     ds: PostgresDataSource, 
-    date_param: Optional[str] = None,
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
     milp_time_limit: int = 300
 ) -> None:
     """Orchestration complète du processus"""
@@ -49,18 +51,18 @@ async def update_courses_and_dispatch(
 
         # 2. Exécution du dispatch
         logger.info("Début du processus de dispatch...")
-        assignments = await solve_dispatch_problem(ds, date_param, milp_time_limit)
+        assignments = await solve_dispatch_problem(ds, date_begin, date_end, milp_time_limit)
         logger.info(f"Dispatch terminé avec {len(assignments)} affectations")
 
     except Exception as e:
         logger.error(f"Échec critique: {str(e)}", exc_info=True)
         raise
 
-async def main(date_param: Optional[str] = None, milp_timeout: int = 300) -> None:
+async def main(date_begin: Optional[str] = None, date_end: Optional[str] = None, milp_timeout: int = 300) -> None:
     """Point d'entrée principal"""
     ds = PostgresDataSource()
     try:
-        await update_courses_and_dispatch(ds, date_param, milp_timeout)
+        await update_courses_and_dispatch(ds, date_begin, date_end, milp_timeout)
     finally:
         await ds.close()
 
@@ -68,13 +70,35 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Orchestrateur de traitement des courses")
-    parser.add_argument("--date", help="Date de traitement (YYYY-MM-DD)", default=None)
-    parser.add_argument("--milp-timeout", type=int, help="Timeout MILP en secondes (défaut: 300)", default=300)
+    
+    # Modifier ces lignes pour gérer les espaces dans les dates/heures
+    parser.add_argument('--date_begin', nargs='+', help="Date et heure de début (format: 'YYYY-MM-DD HH:MM:SS')")
+    parser.add_argument('--date_end', nargs='+', help="Date et heure de fin (format: 'YYYY-MM-DD HH:MM:SS')")
+    parser.add_argument("--milp_timeout", type=int, help="Timeout MILP en secondes (défaut: 300)", default=300)
     
     args = parser.parse_args()
     
+    # Reconstruire les chaînes de date/heure
+    args.date_begin = ' '.join(args.date_begin) if args.date_begin else None
+    args.date_end = ' '.join(args.date_end) if args.date_end else None
+    
+    # Validation du format des dates
+    if args.date_begin:
+        try:
+            datetime.strptime(args.date_begin, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            logger.error("Format de date_begin invalide. Utilisez YYYY-MM-DD HH:MM:SS")
+            exit(1)
+    
+    if args.date_end:
+        try:
+            datetime.strptime(args.date_end, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            logger.error("Format de date_end invalide. Utilisez YYYY-MM-DD HH:MM:SS")
+            exit(1)
+    
     try:
-        asyncio.run(main(args.date, args.milp_timeout))
+        asyncio.run(main(args.date_begin, args.date_end, args.milp_timeout))
     except KeyboardInterrupt:
         logger.info("Interruption manuelle")
     except Exception as e:
