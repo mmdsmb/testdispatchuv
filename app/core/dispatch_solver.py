@@ -246,9 +246,27 @@ def combined_route_cost(chauffeur, g1, g2):
 
 async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
     """Récupère les courses avec calcul des distances en Python (sans SQL geodesic)"""
+    # query = """
+    #     SELECT 
+    #         c.course_id as id,
+    #         c.nombre_personne as ng,
+    #         c.lieu_prise_en_charge as pickup_address,
+    #         c.destination as dropoff_address,
+    #         ag_pickup.latitude as lat_pickup,
+    #         ag_pickup.longitude as long_pickup,
+    #         ag_dest.latitude as dest_lat,
+    #         ag_dest.longitude as dest_lng,
+    #         c.date_heure_prise_en_charge,
+    #         EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
+    #         cc.duree_trajet_min
+    #     FROM course c
+    #     JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
+    #     JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
+    #     LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
+    # """
     query = """
         SELECT 
-            c.course_id as id,
+            c.groupe_id as id,
             c.nombre_personne as ng,
             c.lieu_prise_en_charge as pickup_address,
             c.destination as dropoff_address,
@@ -259,7 +277,7 @@ async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = N
             c.date_heure_prise_en_charge,
             EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
             cc.duree_trajet_min
-        FROM course c
+        FROM courseGroupe c
         JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
         JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
         LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
@@ -708,7 +726,7 @@ async def solve_dispatch_problem(
         logger.info(f"Lancement MILP (timeout={milp_time_limit}s)")
         prob, status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
         milp_optimal = (pulp.LpStatus[status] == "Optimal")
-        #milp_optimal = (status == "Optimal")
+       
         
         if milp_optimal:
             assignments = extract_assignments(groupes, chauffeurs, x, y)
@@ -722,8 +740,9 @@ async def solve_dispatch_problem(
         if non_couverts:
             logger.warning(f"{len(non_couverts)} groupes non couverts, retraitement")
             prob_nc, status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
+            
             milp_optimal_nc = (pulp.LpStatus[status_nc] == "Optimal")
-            #milp_optimal_nc = (status_nc == "Optimal")
+            
             logger.info(f"Solution MILP  , retraitement GROUPES NON COUVERTS : {milp_optimal_nc}")
             if milp_optimal_nc:
                 nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
@@ -747,180 +766,152 @@ async def solve_dispatch_problem(
         raise
 
 async def save_affectations(ds: PostgresDataSource, assignments):
-    """Sauvegarde les affectations dans les tables courseGroupe et chauffeurAffectation, puis met à jour les champs calculés."""
+    """Sauvegarde les affectations dans la table chauffeurAffectation et met à jour les champs calculés"""
     try:
-        # 1. Sauvegarde dans courseGroupe
-        course_groupe_query = """
-            INSERT INTO courseGroupe (
-                groupe_id, lieu_prise_en_charge_list, destination_list,
-                date_heure_prise_en_charge_list, nombre_personne, vip
-            ) VALUES (
-                %(groupe_id)s, %(lieu_prise_en_charge)s, %(destination)s,
-                %(date_heure_prise_en_charge)s, %(nombre_personne)s, %(vip)s
-            )
-            ON CONFLICT (groupe_id) DO UPDATE
-            SET 
-                lieu_prise_en_charge_list = EXCLUDED.lieu_prise_en_charge_list,
-                destination_list = EXCLUDED.destination_list,
-                date_heure_prise_en_charge_list = EXCLUDED.date_heure_prise_en_charge_list,
-                nombre_personne = EXCLUDED.nombre_personne,
-                vip = EXCLUDED.vip
-        """
-
-        # 2. Sauvegarde dans chauffeurAffectation (champs de base uniquement)
+        # 1. Sauvegarde des affectations dans chauffeurAffectation
         chauffeur_affectation_query = """
             INSERT INTO chauffeurAffectation (
-                groupe_id, chauffeur_id, statut_affectation, date_created
+                groupe_id, chauffeur_id, statut_affectation, date_created,
+                combiner_avec_groupe_id, course_combinee_id
             ) VALUES (
-                %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW()
+                %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW(),
+                %(combiner_avec_groupe_id)s, %(course_combinee_id)s
             )
             ON CONFLICT (groupe_id, chauffeur_id) DO UPDATE
             SET 
-                statut_affectation = EXCLUDED.statut_affectation
+                statut_affectation = EXCLUDED.statut_affectation,
+                combiner_avec_groupe_id = EXCLUDED.combiner_avec_groupe_id,
+                course_combinee_id = EXCLUDED.course_combinee_id
         """
-        print("list(assignments.keys()" , list(assignments.keys()))
-        # 3. Récupération des informations des courses
-        courses_info = await ds.fetch_all("""
-            SELECT c.course_id, c.groupe_id, c.prenom_nom, c.telephone, c.num_vol,
-                c.date_heure_prise_en_charge, c.lieu_prise_en_charge, c.destination,
-                c.nombre_personne, cc.duree_trajet_min
-            FROM course c
-            LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-            WHERE c.groupe_id = ANY(%(groupes_ids)s)
-        """, {
-            "groupes_ids": list(assignments.keys())
-        })
-        courses_dict = {c['groupe_id']: c for c in courses_info}
 
-        print("courses_dict" , courses_dict)
-
-        groupes_concernes = []
-
-        # 4. Traitement des affectations
+        # 2. Traitement des affectations
         for groupe_id, affectations in assignments.items():
-            course_info = courses_dict.get(groupe_id, {})
-            groupes_concernes.append(groupe_id)
-            
-            print("course_info.get('lieu_prise_en_charge')" , course_info.get('lieu_prise_en_charge'))
-            print("course_info.get('destination')" , course_info.get('destination'))
-            print("course_info.get('date_heure_prise_en_charge')" , course_info.get('date_heure_prise_en_charge'))
-            print("course_info.get('nombre_personne')" , course_info.get('nombre_personne'))
-            print("course_info['nombre_personne']" , course_info['nombre_personne'])
-            # Insertion dans courseGroupe
-            await ds.execute_transaction([(course_groupe_query, {
-                "groupe_id": groupe_id,
-                "lieu_prise_en_charge": course_info.get('lieu_prise_en_charge', ''),
-                "destination": course_info.get('destination', ''),
-                "date_heure_prise_en_charge": course_info.get('date_heure_prise_en_charge'),
-                "nombre_personne": course_info.get('nombre_personne'),
-                "vip": False  # À adapter selon vos besoins
-            })])
-
-            # Insertion des affectations de base
             for affectation in affectations:
                 chauffeur_id = affectation.get('chauffeur')
                 if not chauffeur_id:
                     continue
-                print("groupe_id , chauffeur_id " , groupe_id ,chauffeur_id)
+
+                # Récupérer les informations de combinaison depuis l'objet assignments
+                combiner_avec_groupe_id = None
+                course_combinee_id = None
+                if 'combiné_avec' in affectation and affectation['combiné_avec']:
+                    combiner_avec_groupe_id = ",".join(map(str, affectation['combiné_avec']))
+                if 'combo_id' in affectation:
+                    course_combinee_id = affectation['combo_id']
+
                 await ds.execute_transaction([(chauffeur_affectation_query, {
                     "groupe_id": groupe_id,
                     "chauffeur_id": chauffeur_id,
-                    "statut": "draft"
+                    "statut": "draft",
+                    "combiner_avec_groupe_id": combiner_avec_groupe_id,
+                    "course_combinee_id": course_combinee_id
                 })])
-        print("groupes_concernes" , groupes_concernes)  
-        # 5. Mise à jour des champs calculés pour les groupes concernés
-        if groupes_concernes:
-            await ds.execute_transaction([(
-                f"""
-                UPDATE chauffeurAffectation ca
-                SET 
-                    nombre_personne_prise_en_charge = (
-                        SELECT cg.nombre_personne 
-                        FROM courseGroupe cg 
-                        WHERE cg.groupe_id = ca.groupe_id
-                    ),
-                    prenom_nom_chauffeur = (
-                        SELECT ch.prenom_nom 
-                        FROM chauffeur ch 
-                        WHERE ch.chauffeur_id = ca.chauffeur_id
-                    ),
-                    nombre_place_chauffeur = (
-                        SELECT ch.nombre_place 
-                        FROM chauffeur ch 
-                        WHERE ch.chauffeur_id = ca.chauffeur_id
-                    ),
-                    telephone_chauffeur = (
-                        SELECT ch.telephone 
-                        FROM chauffeur ch 
-                        WHERE ch.chauffeur_id = ca.chauffeur_id
-                    ),
-                    partager_avec_chauffeur_json = (
-                        SELECT jsonb_agg(
-                            jsonb_build_object(
-                                'prenom_nom', ch2.prenom_nom,
-                                'telephone', ch2.telephone,
-                                'nombre_place', ch2.nombre_place
-                            )
+
+        # 3. Mise à jour des champs calculés dans chauffeurAffectation
+        update_query = """
+            UPDATE chauffeurAffectation ca
+            SET 
+                nombre_personne_prise_en_charge = (
+                    SELECT cg.nombre_personne 
+                    FROM courseGroupe cg 
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                prenom_nom_chauffeur = (
+                    SELECT ch.prenom_nom 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                nombre_place_chauffeur = (
+                    SELECT ch.nombre_place 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                telephone_chauffeur = (
+                    SELECT ch.telephone 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                partager_avec_chauffeur_json = (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'prenom_nom', ch2.prenom_nom,
+                            'telephone', ch2.telephone,
+                            'nombre_place', ch2.nombre_place
                         )
-                        FROM chauffeurAffectation ca2
-                        JOIN chauffeur ch2 ON ca2.chauffeur_id = ch2.chauffeur_id
-                        WHERE ca2.groupe_id = ca.groupe_id 
-                        AND ca2.chauffeur_id != ca.chauffeur_id
-                    ),
-                    course_partagee = (
-                        SELECT COUNT(*) > 1
-                        FROM chauffeurAffectation ca2
-                        WHERE ca2.groupe_id = ca.groupe_id
-                    ),
-                    passagers_json = (
-                        SELECT jsonb_agg(
-                            DISTINCT jsonb_build_object(
-                                'prenom_nom', co.prenom_nom,
-                                'telephone', co.telephone,
-                                'num_vol', COALESCE(co.num_vol, 'N/A'),
-                                'nombre_personne', co.nombre_personne,
-                                'date_heure_prise_en_charge', co.date_heure_prise_en_charge,
-                                'lieu_prise_en_charge', co.lieu_prise_en_charge,
-                                'destination', co.destination,
-                                'groupe_id', co.groupe_id
-                            )
-                        )
-                        FROM course co
-                        WHERE co.groupe_id = ca.groupe_id
-                    ),
-                    course_combinee = (
-                        SELECT COUNT(c.*) > 0
-                        FROM course c
-                        WHERE c.groupe_id IN (
-                            SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
-                        )
-                    ),
-                    details_course_combinee_json = (
-                        SELECT jsonb_agg(
-                            jsonb_build_object(
-                                'prenom_nom', c.prenom_nom,
-                                'telephone', c.telephone,
-                                'numero_vol', COALESCE(c.num_vol, 'N/A'),
-                                'heure_prise_en_charge', c.date_heure_prise_en_charge,
-                                'lieu_prise_en_charge', c.lieu_prise_en_charge,
-                                'destination', c.destination,
-                                'groupe_id', c.groupe_id
-                            )
-                        )
-                        FROM course c
-                        WHERE c.groupe_id IN (
-                            SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
-                        )
-                    ),
-                    vip = (
-                        SELECT cg.vip 
-                        FROM courseGroupe cg 
-                        WHERE cg.groupe_id = ca.groupe_id
                     )
-                WHERE ca.groupe_id = ANY(%(groupes)s)
-                """,
-                {"groupes": groupes_concernes}
-            )])
+                    FROM chauffeurAffectation ca2
+                    JOIN chauffeur ch2 ON ca2.chauffeur_id = ch2.chauffeur_id
+                    WHERE ca2.groupe_id = ca.groupe_id 
+                    AND ca2.chauffeur_id != ca.chauffeur_id
+                ),
+                course_partagee = (
+                    SELECT COUNT(*) > 1
+                    FROM chauffeurAffectation ca2
+                    WHERE ca2.groupe_id = ca.groupe_id
+                ),
+                passagers_json = (
+                    SELECT jsonb_agg(
+                        DISTINCT jsonb_build_object(
+                            'prenom_nom', co.prenom_nom,
+                            'telephone', co.telephone,
+                            'num_vol', COALESCE(co.num_vol, 'N/A'),
+                            'nombre_personne', co.nombre_personne,
+                            'date_heure_prise_en_charge', co.date_heure_prise_en_charge,
+                            'lieu_prise_en_charge', co.lieu_prise_en_charge,
+                            'destination', co.destination,
+                            'groupe_id', co.groupe_id
+                        )
+                    )
+                    FROM course co
+                    WHERE co.groupe_id = ca.groupe_id
+                ),
+                course_combinee = (
+                    SELECT COUNT(c.*) > 0
+                    FROM course c
+                    WHERE c.groupe_id IN (
+                        SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                    )
+                ),
+                details_course_combinee_json = (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'prenom_nom', c.prenom_nom,
+                            'telephone', c.telephone,
+                            'numero_vol', COALESCE(c.num_vol, 'N/A'),
+                            'heure_prise_en_charge', c.date_heure_prise_en_charge,
+                            'lieu_prise_en_charge', c.lieu_prise_en_charge,
+                            'destination', c.destination,
+                            'groupe_id', c.groupe_id
+                        )
+                    )
+                    FROM course c
+                    WHERE c.groupe_id IN (
+                        SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                    )
+                ),
+                vip = (
+                    SELECT cg.vip 
+                    FROM courseGroupe cg 
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                date_heure_prise_en_charge = (
+                    SELECT cg.date_heure_prise_en_charge
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                destination = (
+                    SELECT cg.destination
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                lieu_prise_en_charge = (
+                    SELECT cg.lieu_prise_en_charge
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                )
+            WHERE ca.groupe_id = ANY(%(groupes_ids)s)
+        """
+        await ds.execute_transaction([(update_query, {"groupes_ids": list(assignments.keys())})])
 
     except Exception as e:
         logger.error(f"Erreur lors de la sauvegarde des affectations: {str(e)}")
@@ -1046,3 +1037,222 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
             f"Échec sur {len(errors)} entrées lors de la complétion des coordonnées:\n"
             + "\n".join(errors)
         )
+
+async def group_courses(ds: PostgresDataSource):
+    """Groupe les courses similaires en utilisant les critères de lieu, destination et date"""
+    try:
+        # 1. Récupérer toutes les courses non groupées avec vérification des hashs
+        courses = await ds.fetch_all("""
+            SELECT 
+                c.course_id,
+                c.lieu_prise_en_charge,
+                c.destination,
+                c.date_heure_prise_en_charge,
+                c.nombre_personne,
+                c.vip,
+                c.hash_route,
+                c.groupe_id,
+                c.hash_lieu_prise_en_charge,
+                c.hash_destination,
+                CASE 
+                    WHEN ag1.hash_address IS NULL THEN false
+                    ELSE true
+                END as lieu_prise_en_charge_exists,
+                CASE 
+                    WHEN ag2.hash_address IS NULL THEN false
+                    ELSE true
+                END as destination_exists,
+                CASE 
+                    WHEN cc.hash_route IS NULL THEN false
+                    ELSE true
+                END as route_exists
+            FROM course c
+            LEFT JOIN adresseGps ag1 ON c.hash_lieu_prise_en_charge = ag1.hash_address
+            LEFT JOIN adresseGps ag2 ON c.hash_destination = ag2.hash_address
+            LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
+            WHERE c.groupe_id IS NULL
+            ORDER BY c.date_heure_prise_en_charge
+        """)
+
+        if not courses:
+            logger.info("Aucune course à grouper")
+            return
+
+        # 2. Traiter les hashs manquants
+        for course in courses:
+            # Créer les hashs manquants pour les adresses
+            if not course['lieu_prise_en_charge_exists']:
+                hash_prise_en_charge = hashlib.md5(course['lieu_prise_en_charge'].encode()).hexdigest()
+                # Obtenir les coordonnées
+                pickup_coords = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
+                if pickup_coords:
+                    lat, lng = pickup_coords  # Déballage du tuple
+                    await ds.execute_transaction([("""
+                        INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (hash_address) DO UPDATE
+                        SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+                    """, (hash_prise_en_charge, course['lieu_prise_en_charge'], lat, lng))])
+                    course['hash_lieu_prise_en_charge'] = hash_prise_en_charge
+
+            if not course['destination_exists']:
+                hash_destination = hashlib.md5(course['destination'].encode()).hexdigest()
+                # Obtenir les coordonnées
+                dest_coords = await geocoding_service.get_coordinates(course['destination'])
+                if dest_coords:
+                    lat, lng = dest_coords  # Déballage du tuple
+                    await ds.execute_transaction([("""
+                        INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (hash_address) DO UPDATE
+                        SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+                    """, (hash_destination, course['destination'], lat, lng))])
+                    course['hash_destination'] = hash_destination
+
+            # Créer le hash de route si nécessaire
+            if not course['route_exists'] and course['hash_lieu_prise_en_charge'] and course['hash_destination']:
+                hash_route = f"{course['hash_lieu_prise_en_charge']}_{course['hash_destination']}"
+                # Obtenir les détails du trajet
+                route_details = await geocoding_service.get_route_details(
+                    course['lieu_prise_en_charge'],
+                    course['destination']
+                )
+                if route_details:
+                    pickup_lat, pickup_lng = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
+                    dest_lat, dest_lng = await geocoding_service.get_coordinates(course['destination'])
+                    
+                    await ds.execute_transaction([("""
+                        INSERT INTO coursecalcul (
+                            hash_route, lieu_prise_en_charge, destination,
+                            lieu_prise_en_charge_lat, lieu_prise_en_charge_lng,
+                            destination_lat, destination_lng,
+                            distance_vol_oiseau_km, distance_routiere_km,
+                            duree_trajet_min, duree_trajet_secondes,
+                            points_passage, points_passage_coords
+                        ) VALUES (
+                            %(hash_route)s, %(lieu_prise_en_charge)s, %(destination)s,
+                            %(lieu_prise_en_charge_lat)s, %(lieu_prise_en_charge_lng)s,
+                            %(destination_lat)s, %(destination_lng)s,
+                            %(distance_vol_oiseau_km)s, %(distance_routiere_km)s,
+                            %(duree_trajet_min)s, %(duree_trajet_secondes)s,
+                            %(points_passage)s, %(points_passage_coords)s
+                        ) ON CONFLICT (hash_route) DO UPDATE
+                        SET distance_routiere_km = EXCLUDED.distance_routiere_km,
+                            duree_trajet_min = EXCLUDED.duree_trajet_min,
+                            duree_trajet_secondes = EXCLUDED.duree_trajet_secondes,
+                            points_passage = EXCLUDED.points_passage,
+                            points_passage_coords = EXCLUDED.points_passage_coords
+                    """, {
+                        'hash_route': hash_route,
+                        'lieu_prise_en_charge': course['lieu_prise_en_charge'],
+                        'destination': course['destination'],
+                        'lieu_prise_en_charge_lat': pickup_lat,
+                        'lieu_prise_en_charge_lng': pickup_lng,
+                        'destination_lat': dest_lat,
+                        'destination_lng': dest_lng,
+                        'distance_vol_oiseau_km': route_details['distance_vol_oiseau_km'],
+                        'distance_routiere_km': route_details['distance_routiere_km'],
+                        'duree_trajet_min': route_details['duree_trajet_min'],
+                        'duree_trajet_secondes': route_details['duree_trajet_secondes'],
+                        'points_passage': route_details['points_passage'],
+                        'points_passage_coords': route_details['points_passage_coords']
+                    })])
+                    course['hash_route'] = hash_route
+
+        # 3. Créer un dictionnaire pour stocker les groupes
+        groups = {}
+        
+        for course in courses:
+            # Créer une clé unique pour le groupe basée sur les critères
+            group_key = (
+                course['lieu_prise_en_charge'],
+                course['destination'],
+                course['date_heure_prise_en_charge']
+            )
+            
+            if group_key not in groups:
+                groups[group_key] = {
+                    'courses': [],
+                    'total_personnes': 0,
+                    'vip': False,
+                    'lieu_prise_en_charge': [],
+                    'destination': [],
+                    'date_heure_prise_en_charge': [],
+                    'hash_route': course['hash_route'],
+                    'hash_lieu_prise_en_charge': course['hash_lieu_prise_en_charge'],
+                    'hash_destination': course['hash_destination'],
+                    'course_ids': []
+                }
+            
+            # Ajouter les informations à la liste
+            groups[group_key]['courses'].append(course)
+            groups[group_key]['total_personnes'] += course['nombre_personne']
+            groups[group_key]['vip'] = groups[group_key]['vip'] or course['vip']
+            groups[group_key]['lieu_prise_en_charge'].append(course['lieu_prise_en_charge'])
+            groups[group_key]['destination'].append(course['destination'])
+            groups[group_key]['date_heure_prise_en_charge'].append(course['date_heure_prise_en_charge'])
+            groups[group_key]['course_ids'].append(course['course_id'])
+
+        # 4. Insérer les groupes dans courseGroupe et mettre à jour les courses
+        for group_key, group_data in groups.items():
+            # Créer les JSON arrays pour les listes
+            lieu_prise_en_charge_json = json.dumps(list(set(group_data['lieu_prise_en_charge'])))
+            destination_json = json.dumps(list(set(group_data['destination'])))
+            date_heure_prise_en_charge_json = json.dumps(
+                [dt.isoformat() for dt in sorted(set(group_data['date_heure_prise_en_charge']))]
+            )
+
+            # Insérer le groupe
+            groupe_id = await ds.execute_transaction([("""
+                INSERT INTO courseGroupe (
+                    lieu_prise_en_charge,
+                    destination,
+                    date_heure_prise_en_charge,
+                    nombre_personne,
+                    vip,
+                    lieu_prise_en_charge_json,
+                    destination_json,
+                    date_heure_prise_en_charge_json,
+                    hash_route,
+                    hash_lieu_prise_en_charge,
+                    hash_destination
+                ) VALUES (
+                    %(lieu_prise_en_charge)s,
+                    %(destination)s,
+                    %(date_heure_prise_en_charge)s,
+                    %(nombre_personne)s,
+                    %(vip)s,
+                    %(lieu_prise_en_charge_json)s,
+                    %(destination_json)s,
+                    %(date_heure_prise_en_charge_json)s,
+                    %(hash_route)s,
+                    %(hash_lieu_prise_en_charge)s,
+                    %(hash_destination)s
+                ) RETURNING groupe_id
+            """, {
+                'lieu_prise_en_charge': group_key[0],
+                'destination': group_key[1],
+                'date_heure_prise_en_charge': group_key[2],
+                'nombre_personne': group_data['total_personnes'],
+                'vip': group_data['vip'],
+                'lieu_prise_en_charge_json': lieu_prise_en_charge_json,
+                'destination_json': destination_json,
+                'date_heure_prise_en_charge_json': date_heure_prise_en_charge_json,
+                'hash_route': group_data['hash_route'],
+                'hash_lieu_prise_en_charge': group_data['hash_lieu_prise_en_charge'],
+                'hash_destination': group_data['hash_destination']
+            })])
+
+            # Mettre à jour les courses
+            course_ids_str = ",".join(str(course_id) for course_id in group_data['course_ids'])
+            await ds.execute_transaction([("""
+                UPDATE course
+                SET groupe_id = %s
+                WHERE course_id = ANY(STRING_TO_ARRAY(%s, ',')::bigint[])
+            """, (groupe_id[0][0], course_ids_str))])
+
+        logger.info(f"Groupage terminé : {len(groups)} groupes créés ou mis à jour")
+
+    except Exception as e:
+        logger.error(f"Erreur lors du groupage des courses : {str(e)}")
+        raise
