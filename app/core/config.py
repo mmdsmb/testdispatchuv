@@ -82,7 +82,7 @@ class Settings(BaseSettings):
             return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
-    GOOGLE_MAPS_API_URL: str = None  # Configuré via .env #"https://maps.googleapis.com/maps/api/geocode/json"
+    GOOGLE_MAPS_API_URL: str = "https://maps.googleapis.com/maps/api/geocode/json"  # Default Google Maps API URL
     
     class Config:
         env_file = ".env"

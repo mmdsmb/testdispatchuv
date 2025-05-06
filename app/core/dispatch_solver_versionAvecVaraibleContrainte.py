@@ -1,4 +1,5 @@
 """
+ATTENTION :CETTE VERSION AVEC MODIFICATION DECRITE CI DESSOUS NON SATFOFAISANT
 Avec la version 20250506, j'ai modifié la fonction solve_MILP pour résoudre le problème des noms de contraintes qui se chevauchent.         
 Les changements principaux sont :
 - Ajout d'un compteur constraint_counter qui s'incrémente à chaque nouvelle contrainte
@@ -13,7 +14,6 @@ Cette modification garantit que chaque contrainte aura un nom unique, ce qui dev
 Vous pouvez maintenant réessayer d'exécuter le dispatch. L'erreur de noms de contraintes qui se chevauchent ne devrait plus se produire.
 Voulez-vous que je fasse d'autres modifications ou que j'explique certains aspects plus en détail ?
 """
-
 import os
 import math
 import random

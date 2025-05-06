@@ -6,7 +6,7 @@ import secrets
 import logging
 from app.db.postgres import PostgresDataSource
 from app.core.course_groupe_processor import CourseGroupeProcessor
-from app.core.dispatch_solver import solve_dispatch_problem
+from app.core.dispatch_solver_versionAvecVaraibleContrainte import solve_dispatch_problem
 from app.core.config import settings
 
 # Configuration du logging

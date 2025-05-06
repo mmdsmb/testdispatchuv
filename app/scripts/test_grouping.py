@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 from app.db.postgres import PostgresDataSource
-from app.core.dispatch_solver import group_courses
+from app.core.dispatch_solver_versionAvecVaraibleContrainte import group_courses
 
 async def main():
     ds = PostgresDataSource()
