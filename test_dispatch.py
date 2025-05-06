@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 from app.db.postgres import PostgresDataSource
-from app.core.course_processor import CourseProcessor
+from app.core.course_groupe_processor import CourseGroupeProcessor
 from app.core.dispatch_solver import solve_dispatch_problem
 from datetime import datetime
 
@@ -20,6 +20,19 @@ logging.getLogger("app.db.postgres").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+async def process_course_group(
+    processor: CourseGroupeProcessor,
+    groupe_ids: list[str]
+) -> None:
+    """Traite un groupe de courses"""
+    for groupe_id in groupe_ids:
+        try:
+            await processor.process_course_groupe(groupe_id)
+            logger.info(f"Groupe {groupe_id} traité avec succès")
+        except Exception as e:
+            logger.error(f"Erreur traitement groupe {groupe_id}: {str(e)}")
+
+
 async def update_courses_and_dispatch(
     ds: PostgresDataSource, 
     date_begin: Optional[str] = None,
@@ -28,26 +41,23 @@ async def update_courses_and_dispatch(
 ) -> None:
     """Orchestration complète du processus"""
     try:
-        # 1. Mise à jour des courses
-        processor = CourseProcessor(ds)
-        courses = await ds.fetch_all("""
-            SELECT c.course_id
-            FROM course c
-            LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-            WHERE c.hash_route IS NULL OR c.hash_route = ''
+        # 1. Mise à jour des groupes de courses
+        processor = CourseGroupeProcessor(ds)
+        groupes = await ds.fetch_all("""
+            SELECT cg.groupe_id
+            FROM courseGroupe cg
+            LEFT JOIN coursecalcul cc ON cg.hash_route = cc.hash_route
+            WHERE cg.hash_route IS NULL OR cg.hash_route = ''
             OR cc.duree_trajet_min IS NULL OR cc.distance_routiere_km IS NULL
             OR cc.points_passage_coords IS NULL OR cc.distance_vol_oiseau_km IS NULL
             OR cc.duree_trajet_secondes IS NULL OR cc.points_passage IS NULL
         """)
         
-        logger.info(f"Nombre de courses à traiter: {len(courses)}")
+        logger.info(f"Nombre de groupes à traiter: {len(groupes)}")
         
-        for course in courses:
-            try:
-                await processor.process_course(course['course_id'])
-                logger.info(f"Course {course['course_id']} traitée avec succès")
-            except Exception as e:
-                logger.error(f"Erreur traitement course {course['course_id']}: {str(e)}")
+        # Diviser les groupes pour le traitement
+        groupe_ids = [groupe['groupe_id'] for groupe in groupes]
+        await process_course_group(processor, groupe_ids)
 
         # 2. Exécution du dispatch
         logger.info("Début du processus de dispatch...")
@@ -69,7 +79,7 @@ async def main(date_begin: Optional[str] = None, date_end: Optional[str] = None,
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Orchestrateur de traitement des courses")
+    parser = argparse.ArgumentParser(description="Orchestrateur de traitement des groupes de courses")
     
     # Modifier ces lignes pour gérer les espaces dans les dates/heures
     parser.add_argument('--date_begin', nargs='+', help="Date et heure de début (format: 'YYYY-MM-DD HH:MM:SS')")

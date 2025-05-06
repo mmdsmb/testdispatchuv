@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.api import api_router
 from app.core.config import settings
+from app.api import dispatch
 
 # Configure logging
 logging.basicConfig(
@@ -13,18 +14,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    description="A structured FastAPI project with versioning and Supabase integration",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    title="Dispatch API",
+    description="API pour la gestion du dispatch des courses",
+    version="1.0.0"
 )
 
 # Set up CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # À configurer selon vos besoins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,7 +30,13 @@ app.add_middleware(
 
 # Inclure les routes API
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(dispatch.router)
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the FastAPI project"} 
+    """Point d'entrée de l'API"""
+    return {
+        "message": "Bienvenue sur l'API de dispatch",
+        "version": "1.0.0",
+        "documentation": "/docs"
+    } 

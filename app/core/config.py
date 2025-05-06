@@ -48,9 +48,9 @@ class Settings(BaseSettings):
     
     # Déclarer explicitement les champs qui causaient des erreurs
     POSTGRES_SERVER: Optional[str] = None
-    POSTGRES_USER: Optional[str] = None
-    POSTGRES_PASSWORD: Optional[str] = None
-    POSTGRES_DB: Optional[str] = None
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "postgres")
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
     
     SUPABASE_POOLER_HOST: str
@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     SUPABASE_POOLER_USER: str
     SUPABASE_POOLER_PASSWORD: str
     SUPABASE_POOLER_SSLMODE: str = "require"
+    
+    # Configuration de l'API Google Maps
+    GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
+
+    # Configuration de l'authentification de l'API de dispatch
+    DISPATCH_API_USERNAME: str = os.getenv("DISPATCH_API_USERNAME", "admin")
+    DISPATCH_API_PASSWORD: str = os.getenv("DISPATCH_API_PASSWORD", "admin")
     
     # Override database settings for CI environment
     if IN_CI:
@@ -76,7 +83,6 @@ class Settings(BaseSettings):
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
     GOOGLE_MAPS_API_URL: str = None  # Configuré via .env #"https://maps.googleapis.com/maps/api/geocode/json"
-    GOOGLE_MAPS_API_KEY: str = None  # Configuré via .env
     
     class Config:
         env_file = ".env"
@@ -89,7 +95,7 @@ if os.environ.get('DISABLE_CONFIG_LOGGING'):
     # Désactive complètement la configuration des logs si DISABLE_CONFIG_LOGGING est défini
     pass
 else:
-    # Ancienne configuration (gardée pour compatibilité)
+    # Configuration des logs
     LOG_DIR = Path(__file__).parent.parent / "logs"
     LOG_DIR.mkdir(exist_ok=True)
     logging.basicConfig(

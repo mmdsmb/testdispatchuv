@@ -1,3 +1,19 @@
+"""
+Avec la version 20250506, j'ai modifié la fonction solve_MILP pour résoudre le problème des noms de contraintes qui se chevauchent.         
+Les changements principaux sont :
+- Ajout d'un compteur constraint_counter qui s'incrémente à chaque nouvelle contrainte
+- Modification de tous les noms de contraintes pour inclure ce compteur unique
+- Application de ce changement à tous les types de contraintes :
+Contraintes de lien (Lien_z_x, Lien_z_y, Lien_z_up)
+Contraintes de minimalité
+Contraintes de non-chevauchement
+Contraintes de capacité maximale
+Contraintes de capacité minimale
+Cette modification garantit que chaque contrainte aura un nom unique, ce qui devrait résoudre l'erreur "overlapping constraint names: Lien_z_x_1_1".
+Vous pouvez maintenant réessayer d'exécuter le dispatch. L'erreur de noms de contraintes qui se chevauchent ne devrait plus se produire.
+Voulez-vous que je fasse d'autres modifications ou que j'explique certains aspects plus en détail ?
+"""
+
 import os
 import math
 import random
