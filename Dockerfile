@@ -18,6 +18,8 @@ COPY pyproject.toml .
 # Install dependencies using uv with --system
 RUN uv pip install --system -e .
 RUN uv pip install --system psycopg2-binary
+# Add email-validator
+RUN pip install email-validator
 
 # Copy application code
 COPY . .

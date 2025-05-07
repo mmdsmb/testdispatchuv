@@ -78,3 +78,19 @@ git rebase origin/main
 > ```bash
 > git config --global pull.rebase true
 > ```
+
+comment revenir au dernier commit distant. Il y a plusieurs approches possibles selon votre situation :
+Si vous voulez simplement revenir au dernier commit distant sans perdre vos modifications locales :
+
+```bash
+# 1. Récupérer les changements distants
+git fetch origin
+
+```
+
+perdre toutes vos modifications locales et revenir à l'état du dernier commit, vous pouvez utiliser la commande suivante
+```bash
+# 1. Récupérer les changements distants
+git reset --hard HEAD
+
+```

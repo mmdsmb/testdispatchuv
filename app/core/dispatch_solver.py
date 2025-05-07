@@ -1,5 +1,3 @@
-
-
 import os
 import math
 import random
@@ -73,7 +71,7 @@ logger = logging.getLogger(__name__)
 # for g in groupes:
 #     row = {
 #         "group_id": g['id'],
-#         "N": g['N'],
+#         "N": g['ng'],
 #         "pickup_date": g['pickup_date'],
 #         "pickup_time": g['t'],
 #         "duree_trajet_min": g['duree_trajet_min'],
@@ -152,95 +150,42 @@ def haversine(lat1, lon1, lat2, lon2):
 def travel_time_single(chauffeur, groupe):
     """Calcule le temps de trajet ou échoue explicitement"""
     try:
-        coords = {
-            'chauffeur': (float(chauffeur['lat_chauff']), float(chauffeur['long_chauff'])),
-            'pickup': (float(groupe['lat_pickup']), float(groupe['long_pickup'])),
-            'destination': (float(groupe['dest_lat']), float(groupe['dest_lng']))
-        }
-        
-        # Validation finale
-        for name, (lat, lng) in coords.items():
-            if None in (lat, lng):
-                raise ValueError(f"Coordonnée manquante ({name}) après géocodage")
-
-        t1 = geodesic(coords['chauffeur'], coords['pickup']).kilometers
-        t2 = float(groupe['duree_trajet_min'])  # Conversion explicite
-        t3 = geodesic(coords['destination'], coords['chauffeur']).kilometers
-        
+        if not is_finite_coordinate(chauffeur['lat_chauff'], chauffeur['long_chauff'],
+                                    groupe['lat_pickup'], groupe['long_pickup'],
+                                    groupe['dest_lat'], groupe['dest_lng']):
+            raise ValueError("Coordonnées invalides")
+        t1 = round(geodesic((chauffeur['lat_chauff'], chauffeur['long_chauff']),
+                            (groupe['lat_pickup'], groupe['long_pickup'])).kilometers)
+        t2 = round(groupe['duree_trajet_min'])
+        t3 = round(geodesic((groupe['dest_lat'], groupe['dest_lng']),
+                            (chauffeur['lat_chauff'], chauffeur['long_chauff'])).kilometers)
         return t1 + t2 + t3
     except Exception as e:
         logger.error(f"Erreur de calcul pour {groupe['id']}: {e}")
         raise
 
 def combined_route_cost(chauffeur, g1, g2):
-    """
-    Calcule le coût d'une route combinée.
-    Retourne None si la route n'est pas réalisable pour des raisons spécifiques.
-    """
-    # Vérification des coordonnées
-    if not all(is_finite_coordinate(coord) for coord in [
-        chauffeur['lat_chauff'], chauffeur['long_chauff'],
-        g1['lat_pickup'], g1['long_pickup'],
-        g2['lat_pickup'], g2['long_pickup'],
-        g1['dest_lat'], g1['dest_lng'],
-        g2['dest_lat'], g2['dest_lng']
-    ]):
-        logger.warning(f"Coordonnées invalides pour la route combinée: chauffeur={chauffeur['id']}, g1={g1['id']}, g2={g2['id']}")
-        return None
-
-    # Vérification de la faisabilité temporelle
     if abs(g1['t_min'] - g2['t_min']) > 45:
         return None
-
-    # Calcul des distances
     D = (chauffeur['lat_chauff'], chauffeur['long_chauff'])
     C1 = (g1['lat_pickup'], g1['long_pickup'])
     C2 = (g2['lat_pickup'], g2['long_pickup'])
     A1 = (g1['dest_lat'], g1['dest_lng'])
     A2 = (g2['dest_lat'], g2['dest_lng'])
-
-    # Calcul des temps de trajet
-    def t(p, q):
-        return round(geodesic(p, q).kilometers)
-
-    # Évaluation des 4 routes possibles
+    Tsolo1 = travel_time_single(chauffeur, g1)
+    Tsolo2 = travel_time_single(chauffeur, g2)
+    def t(p, q): return round(geodesic(p, q).kilometers)
     routes = [
-        (t(D, C1), t(C1, C2), t(C2, A1), t(A1, A2), t(A2, D)),
-        (t(D, C1), t(C1, C2), t(C2, A2), t(A2, A1), t(A1, D)),
-        (t(D, C2), t(C2, C1), t(C1, A1), t(A1, A2), t(A2, D)),
-        (t(D, C2), t(C2, C1), t(C1, A2), t(A2, A1), t(A1, D))
+        (t(D,C1), t(C1,C2), t(C2,A1), t(A1,A2), t(A2,D)),
+        (t(D,C1), t(C1,C2), t(C2,A2), t(A2,A1), t(A1,D)),
+        (t(D,C2), t(C2,C1), t(C1,A1), t(A1,A2), t(A2,D)),
+        (t(D,C2), t(C2,C1), t(C1,A2), t(A2,A1), t(A1,D)),
     ]
-
-    feasible_costs = []
+    feasible = []
     for route in routes:
-        T_total = sum(route)
-        # Vérification des contraintes temporelles
-        if route == routes[0]:
-            delay_pickup_g1 = route[0]
-            delay_pickup_g2 = route[0] + route[1] - (g2['t_min'] - g1['t_min'])
-            delay_arrival_g1 = (route[0] + route[1] + route[2]) - travel_time_single(chauffeur, g1)
-            delay_arrival_g2 = (route[0] + route[1] + route[2] + route[3]) - travel_time_single(chauffeur, g2)
-        elif route == routes[1]:
-            delay_pickup_g1 = route[0]
-            delay_pickup_g2 = route[0] + route[1] - (g2['t_min'] - g1['t_min'])
-            delay_arrival_g2 = (route[0] + route[1] + route[2]) - travel_time_single(chauffeur, g2)
-            delay_arrival_g1 = (route[0] + route[1] + route[2] + route[3]) - travel_time_single(chauffeur, g1)
-        elif route == routes[2]:
-            delay_pickup_g2 = route[0]
-            delay_pickup_g1 = route[0] + route[1] - (g1['t_min'] - g2['t_min'])
-            delay_arrival_g1 = (route[0] + route[1] + route[2]) - travel_time_single(chauffeur, g1)
-            delay_arrival_g2 = (route[0] + route[1] + route[2] + route[3]) - travel_time_single(chauffeur, g2)
-        else:  # Route4
-            delay_pickup_g2 = route[0]
-            delay_pickup_g1 = route[0] + route[1] - (g1['t_min'] - g2['t_min'])
-            delay_arrival_g2 = (route[0] + route[1] + route[2]) - travel_time_single(chauffeur, g2)
-            delay_arrival_g1 = (route[0] + route[1] + route[2] + route[3]) - travel_time_single(chauffeur, g1)
-
-        if (delay_pickup_g1 <= 40 and delay_pickup_g2 <= 40
-            and delay_arrival_g1 <= 60 and delay_arrival_g2 <= 60):
-            feasible_costs.append(T_total)
-
-    return min(feasible_costs) if feasible_costs else None
+        # on suppose admissible
+        feasible.append(sum(route))
+    return min(feasible) if feasible else None
 
 # =============================================================================
 # Lecture et préparation des données (version PostgresDataSource)
@@ -375,126 +320,59 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
     logger.info(f"Nombre de groupes : {len(groupes)}, Nombre de chauffeurs : {len(chauffeurs)}")
     
     try:    
-        prob = pulp.LpProblem("Affectation_Chauffeurs_Groupes", pulp.LpMinimize)
-
-        # Variables d'affectation solo
-        x = {}
+        group_ids = {g['id'] for g in groupes}
+        prob = pulp.LpProblem("Affectation", pulp.LpMinimize)
+        x,y = {},{}
+        # solo
         for g in groupes:
             for c in chauffeurs:
-                if (g['id'], c['id']) in solo_cost:
-                    x[(g['id'], c['id'])] = pulp.LpVariable(f"x_{g['id']}_{c['id']}", 0, 1, pulp.LpBinary)
-
-        # Variables d'affectation combinée
-        y = {}
-        for key, cost in combo_cost.items():
-            g1_id, g2_id, c_id = key
-            y[key] = pulp.LpVariable(f"y_{g1_id}_{g2_id}_{c_id}", 0, 1, pulp.LpBinary)
-
-        # Fonction objectif : Minimiser le temps total des trajets
-        objective = []
-        for key, var in x.items():
-            objective.append(solo_cost[key] * var)
-        for key, var in y.items():
-            objective.append(combo_cost[key] * var)
-        prob += pulp.lpSum(objective), "Temps_Total"
-
-        # Contrainte de couverture : chaque groupe doit être pris en charge entièrement
-        chauffeur_capacity = {ch['id']: ch['n'] for ch in chauffeurs}
+                if (g['id'],c['id']) in solo_cost:
+                    x[(g['id'],c['id'])] = pulp.LpVariable(f"x_{g['id']}_{c['id']}",0,1,pulp.LpBinary)
+        # combo filtré
+        for (g1,g2,c),cost in combo_cost.items():
+            if g1 in group_ids and g2 in group_ids:
+                y[(g1,g2,c)] = pulp.LpVariable(f"y_{g1}_{g2}_{c}",0,1,pulp.LpBinary)
+        # objectif
+        prob += pulp.lpSum([solo_cost[k]*v for k,v in x.items()]+[combo_cost[k]*v for k,v in y.items()])
+        # couverture
+        cap={c['id']:c['n'] for c in chauffeurs}
         for g in groupes:
-            solo_cap = pulp.lpSum(c['n'] * x[(g['id'], c['id'])] for c in chauffeurs if (g['id'], c['id']) in x)
-            comb_cap = pulp.lpSum(0.5 * chauffeur_capacity[c_id] * var
-                                for (g1_id, g2_id, c_id), var in y.items() if g['id'] in [g1_id, g2_id])
-            prob += solo_cap + comb_cap >= g['ng'], f"Couverture_{g['id']}"
-
-        # Contrainte de minimalité des affectations multiples
-        M_big = 1e4
-        z = {}
-        constraint_counter = 0  # Compteur pour les noms de contraintes uniques
-        
-        for g in groupes:
-            for c in chauffeurs:
-                z[(g['id'], c['id'])] = pulp.LpVariable(f"z_{g['id']}_{c['id']}", 0, 1, pulp.LpBinary)
-
-        for g in groupes:
-            for c in chauffeurs:
-                lhs = x[(g['id'], c['id'])] if (g['id'], c['id']) in x else 0
-                y_sum = pulp.lpSum(var for key, var in y.items() if key[2] == c['id'] and (key[0] == g['id'] or key[1] == g['id']))
-                
-                # Utilisation du compteur pour rendre les noms uniques
-                constraint_counter += 1
-                prob += z[(g['id'], c['id'])] >= lhs, f"Lien_z_x_{g['id']}_{c['id']}_{constraint_counter}"
-                
-                constraint_counter += 1
-                prob += z[(g['id'], c['id'])] >= y_sum, f"Lien_z_y_{g['id']}_{c['id']}_{constraint_counter}"
-                
-                constraint_counter += 1
-                prob += z[(g['id'], c['id'])] <= lhs + y_sum, f"Lien_z_up_{g['id']}_{c['id']}_{constraint_counter}"
-
-                expr = []
-                for k in chauffeurs:
-                    if k['id'] != c['id'] and (g['id'], k['id']) in x:
-                        term_solo = k['n'] * x[(g['id'], k['id'])]
-                        term_combo = k['n'] * pulp.lpSum(var for key, var in y.items()
-                                                        if key[2] == k['id'] and (key[0] == g['id'] or key[1] == g['id']))
-                        expr.append(term_solo + term_combo)
-                
-                constraint_counter += 1
-                prob += pulp.lpSum(expr) <= g['ng'] - 1 + M_big * (1 - z[(g['id'], c['id'])]), f"Minimalite_{g['id']}_{c['id']}_{constraint_counter}"
-
-        # Contrainte de non-chevauchement et limite des missions par chauffeur
+            soloCap = pulp.lpSum(c['n']*x[(g['id'],c['id'])] for c in chauffeurs if (g['id'],c['id']) in x)
+            comboCap = pulp.lpSum(0.5*cap[k[2]]*v for k,v in y.items() if g['id'] in k[:2])
+            prob += soloCap+comboCap>=g['ng']
+        # non-chevauchement + max4
         for c in chauffeurs:
-            candidate_list = []
+            tasks=[]
             for g in groupes:
-                if (g['id'], c['id']) in x:
-                    T_start = g['t_min']
-                    t_single = solo_cost[(g['id'], c['id'])]
-                    T_finish = T_start + Decimal(str(t_single))  # Convert t_single to Decimal
-                    candidate_list.append((("solo", g['id'], c['id']), T_start, T_finish, x[(g['id'], c['id'])]))
-            for key, var in y.items():
-                if key[2] == c['id']:
-                    g1 = next(g for g in groupes if g['id'] == key[0])
-                    g2 = next(g for g in groupes if g['id'] == key[1])
-                    T_start = min(g1['t_min'], g2['t_min'])
-                    t_combo = combo_cost.get(key, None)
-                    if t_combo is not None:
-                        T_finish = T_start + t_combo
-                        candidate_list.append((("combo", key[0], key[1], c['id']), T_start, T_finish, var))
-            for i in range(len(candidate_list)):
-                for j in range(i+1, len(candidate_list)):
-                    _, Tsi, Tfi, var_i = candidate_list[i]
-                    _, Tsj, Tfj, var_j = candidate_list[j]
-                    if Tsi < Tfj and Tsj < Tfi:
-                        constraint_counter += 1
-                        prob += var_i + var_j <= 1, f"NonChevauchement_{c['id']}_{i}_{j}_{constraint_counter}"
-            
-            solo_vars = [x[(g['id'], c['id'])] for g in groupes if (g['id'], c['id']) in x]
-            combo_vars = [var for key, var in y.items() if key[2] == c['id']]
-            constraint_counter += 1
-            prob += pulp.lpSum(solo_vars + combo_vars) <= 4, f"MaxMissions_{c['id']}_{constraint_counter}"
-
-        # Contrainte supplémentaire sur la capacité pour groupes de faible demande
+                if (g['id'],c['id']) in x:
+                    s=g['t_min'];f=s+solo_cost[(g['id'],c['id'])]
+                    tasks.append((s,f,x[(g['id'],c['id'])]))
+            for (g1,g2,cc),v in y.items():
+                if cc==c['id']:
+                    gA=next(g for g in groupes if g['id']==g1)
+                    gB=next(g for g in groupes if g['id']==g2)
+                    s=min(gA['t_min'],gB['t_min']);f=s+combo_cost[(g1,g2,cc)]
+                    tasks.append((s,f,v))
+            for i in range(len(tasks)):
+                for j in range(i+1,len(tasks)):
+                    if tasks[i][0]<tasks[j][1] and tasks[j][0]<tasks[i][1]:
+                        prob += tasks[i][2]+tasks[j][2]<=1
+            prob += pulp.lpSum(t[2] for t in tasks)<=4
+        # capacité faible
         for g in groupes:
-            if g['ng'] <= 4:
+            if g['ng']<=4:
                 for c in chauffeurs:
-                    if c['n'] > 4 and (g['id'], c['id']) in x:
-                        constraint_counter += 1
-                        prob += x[(g['id'], c['id'])] == 0, f"Capacite_minimale_solo_{g['id']}_{c['id']}_{constraint_counter}"
-
-        for key, var in y.items():
-            g1 = next(g for g in groupes if g['id'] == key[0])
-            g2 = next(g for g in groupes if g['id'] == key[1])
-            c  = next(ch for ch in chauffeurs if ch['id'] == key[2])
-            if (g1['ng'] <= 3 or g2['ng'] <= 3) and c['n'] > 4:
-                constraint_counter += 1
-                prob += var == 0, f"Capacite_minimale_combo_{key[0]}_{key[1]}_{key[2]}_{constraint_counter}"
-
-        solver = pulp.PULP_CBC_CMD(timeLimit=time_limit, msg=True)
-        result_status = prob.solve(solver)
-        
-        logger.info(f"Statut de la résolution MILP : {pulp.LpStatus[result_status]}")
-        logger.info(f"Valeur de la fonction objectif : {pulp.value(prob.objective)}")
-        
-        return prob, result_status, x, y
+                    if c['n']>4 and (g['id'],c['id']) in x:
+                        prob += x[(g['id'],c['id'])]==0
+        # combo faible
+        for (g1,g2,c),v in y.items():
+            gA=next(g for g in groupes if g['id']==g1)
+            gB=next(g for g in groupes if g['id']==g2)
+            if (gA['ng']<=3 or gB['ng']<=3) and next(ch for ch in chauffeurs if ch['id']==c)['n']>4:
+                prob += v==0
+        solver = pulp.PULP_CBC_CMD(timeLimit=time_limit,msg=False)
+        status=prob.solve(solver)
+        return prob,status,x,y
     
     except Exception as e:
         logger.error(f"Erreur lors de la résolution MILP : {e}")
@@ -503,7 +381,7 @@ def solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, time_limit):
 # =============================================================================
 # Méthode heuristique par recuit simulé
 # =============================================================================
-def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing_assignments=None):
+def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing=None):
     """
     Recuit simulé pour générer une solution admissible.
     Pour simplifier, ici on construit initialement des affectations solo (en respectant non-chevauchement et max 4 missions)
@@ -513,114 +391,62 @@ def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing_assi
     logger.info("Début de la solution heuristique par recuit simulé")
     logger.info(f"Nombre de groupes à traiter : {len(groupes)}")
     logger.info(f"Nombre de chauffeurs disponibles : {len(chauffeurs)}")
-    
-    start_time = time.time()
-    solution = None
-    
     try:
-        # Si existing_assignments est fourni, ne traiter que les groupes non couverts
-        if existing_assignments is None:
-            groups_to_process = groupes
+        if existing is None:
+            assign={}
+            to_proc=groupes
         else:
-            groups_to_process = [g for g in groupes if g['id'] not in existing_assignments or len(existing_assignments[g['id']]) == 0]
-        assignments = {} if existing_assignments is None else existing_assignments.copy()
-        driver_schedule = {c['id']: [] for c in chauffeurs}
-        driver_missions_count = {c['id']: 0 for c in chauffeurs}
+            assign={**existing}
+            to_proc=[g for g in groupes if g['id'] not in assign or not assign[g['id']]]
+        sched={c['id']:[] for c in chauffeurs}
+        cnt={c['id']:0 for c in chauffeurs}
+        for g in sorted(to_proc, key=lambda g:g['t_min']):
+            remaining=g['ng']
+            # tri chauffeurs efficients
+            for c in sorted(chauffeurs, key=lambda c:-c['n']):
+                if remaining<=0: break
+                if cnt[c['id']]>=4: continue
+                if g['ng']<=4 and c['n']>4: continue
+                if (g['id'],c['id']) not in solo_cost: continue
+                st=g['t_min'];fi=st+solo_cost[(g['id'],c['id'])]
+                if any(not(fi<=s or st>=f) for s,f in sched[c['id']]): continue
+                # affecter
+                assign.setdefault(g['id'],[]).append({"chauffeur":c['id'],"trajet":"simple"})
+                sched[c['id']].append((st,fi))
+                cnt[c['id']]+=1
+                remaining -= c['n']
+        return assign
 
-        # Construction d'une solution initiale gloutonne pour les groupes à traiter
-        sorted_groups = sorted(groups_to_process, key=lambda g: g['t_min'])
-        for g in sorted_groups:
-            feasible_assignments = []
-            for c in chauffeurs:
-                cost = solo_cost.get((g['id'], c['id']))
-                if cost is not None and driver_missions_count[c['id']] < 4:
-                    logger.debug(f"Type de start_time: {type(g['t_min'])}, valeur: {g['t_min']}")
-                    logger.debug(f"Type de cost: {type(cost)}, valeur: {cost}")
-                    start_time = float(g['t_min'])  # Conversion explicite en float
-                    finish_time = start_time + float(cost)  # Conversion explicite en float
-                    overlap = False
-                    for (s, f) in driver_schedule[c['id']]:
-                        if not (finish_time <= s or start_time >= f):
-                            overlap = True
-                            break
-                    if not overlap:
-                        feasible_assignments.append((c['id'], cost, start_time, finish_time))
-            if feasible_assignments:
-                chosen = min(feasible_assignments, key=lambda x: x[1])
-                c_id, cost, start_time, finish_time = chosen
-                assignments.setdefault(g['id'], []).append({"chauffeur": c_id, "trajet": "simple"})
-                driver_schedule[c_id].append((start_time, finish_time))
-                driver_missions_count[c_id] += 1
-            else:
-                assignments.setdefault(g['id'], [])
-
-        # Fonction objectif simple (somme des coûts)
-        def objective(sol):
-            total = 0
-            for g in groupes:
-                if sol.get(g['id']):
-                    for assign in sol[g['id']]:
-                        c_id = assign['chauffeur']
-                        total += solo_cost.get((g['id'], c_id), 0)
-            return total
-
-        current_solution = assignments
-        current_obj = objective(current_solution)
-        best_solution = current_solution
-        best_obj = current_obj
-
-        T = 100.0
-        T_min = 1e-3
-        alpha = 0.995
-        max_time = 10 * 60  # 10 minutes
-        start_time_sim = time.time()
-
-        # Perturbation : pour un groupe choisi aléatoirement, tenter de changer d'affectation
-        def perturb(sol):
-            new_sol = {g_id: list(assigns) for g_id, assigns in sol.items()}
-            g = random.choice(groups_to_process)
-            feasible = []
-            for c in chauffeurs:
-                cost = solo_cost.get((g['id'], c['id']))
-                if cost is not None:
-                    feasible.append((c['id'], cost))
-            if feasible:
-                new_c = random.choice(feasible)
-                new_sol[g['id']] = [{"chauffeur": new_c[0], "trajet": "simple"}]
-            return new_sol
-
-        while T > T_min and (time.time() - start_time_sim) < max_time:
-            new_solution = perturb(current_solution)
-            new_obj = objective(new_solution)
-            delta = new_obj - current_obj
-            if delta < 0 or random.random() < math.exp(-delta / T):
-                current_solution = new_solution
-                current_obj = new_obj
-                if new_obj < best_obj:
-                    best_solution = new_solution
-                    best_obj = new_obj
-            T *= alpha
-
-        print("Solution heuristique obtenue avec coût total approximatif :", best_obj)
-        
-        
-        solution = best_solution
-        
-        end_time = time.time()
-        logger.info(f"Fin du recuit simulé")
-        logger.info(f"Temps d'exécution : {end_time - start_time:.2f} secondes")
-        logger.info(f"Coût total de la solution heuristique : {best_obj}")
-        
-        return solution
-    
     except Exception as e:
         logger.error(f"Erreur lors de l'exécution du recuit simulé : {e}")
         raise
 
 
+# def extract_assignments(groupes, chauffeurs, x, y):
+    
+#     logger.info("Extracting group-driver assignments")
+
+#     assign={}
+#     for g in groupes:
+#         for c in chauffeurs:
+#             if (g['id'],c['id']) in x and pulp.value(x[(g['id'],c['id'])])>0.5:
+#                 assign.setdefault(g['id'],[]).append({"chauffeur":c['id'],"trajet":"simple"})
+#     for (g1,g2,c),v in y.items():
+#         if pulp.value(v)>0.5:
+#             assign.setdefault(g1,[]).append({"chauffeur":c,"trajet":"combiné"})
+#             assign.setdefault(g2,[]).append({"chauffeur":c,"trajet":"combiné"})
+    
+#     logger.info(f" assignments found: {assign}")
+
+#     return assign
+
 def extract_assignments(groupes, chauffeurs, x, y):
     logger.info("Extracting group-driver assignments")
     assignments = {}
+    
+    # Générer un timestamp unique pour cette session
+    session_timestamp = int(time.time())
+    
     # Affectations solo
     for g in groupes:
         for c in chauffeurs:
@@ -634,15 +460,15 @@ def extract_assignments(groupes, chauffeurs, x, y):
     
     # Log solo assignments
     solo_assignments = sum(1 for g in groupes for c in chauffeurs 
-                           if (g['id'], c['id']) in x and pulp.value(x[(g['id'], c['id'])]) > 0.5)
+                          if (g['id'], c['id']) in x and pulp.value(x[(g['id'], c['id'])]) > 0.5)
     logger.info(f"Solo assignments found: {solo_assignments}")
 
     # Affectations combinées
     combo_counter = 1  # Un compteur pour créer des identifiants uniques
     for (g1_id, g2_id, c_id), var in y.items():
         if pulp.value(var) > 0.5:
-            # Créer un ID unique pour cette combinaison
-            combo_id = f"combo_{combo_counter}"
+            # Créer un ID unique avec timestamp
+            combo_id = f"combo_{session_timestamp}_{combo_counter}"
             combo_counter += 1
 
             # Ajouter les informations pour le premier groupe
@@ -663,10 +489,11 @@ def extract_assignments(groupes, chauffeurs, x, y):
     
     # Log combo assignments
     combo_assignments = sum(1 for (g1_id, g2_id, c_id), var in y.items() 
-                            if pulp.value(var) > 0.5)
+                           if pulp.value(var) > 0.5)
     logger.info(f"Combo assignments found: {combo_assignments}")
     
     return assignments
+
 
 
 
@@ -700,87 +527,98 @@ async def solve_dispatch_problem(
     Résout le problème de dispatch en utilisant d'abord MILP, puis recuit simulé si nécessaire.
     """
     start_time = time.perf_counter()
-    logger.info("Démarrage du dispatch...")
+    logger.info("=== DÉBUT DU DISPATCH ===")
+    logger.info(f"Paramètres - Date début: {date_begin}, Date fin: {date_end}, Timeout MILP: {milp_time_limit}s")
     
     try:
         # 1. Récupération des données
+        logger.info("Étape 1/4: Récupération des données...")
         groupes = await prepare_demandes(ds, date_begin, date_end)
-        logger.info(f"Nombre de groupes à traiter : {len(groupes)}")
-
-        #print("groupes" , groupes)
+        logger.info(f"→ {len(groupes)} groupes à traiter récupérés")
         
         chauffeurs = await prepare_chauffeurs(ds, date_begin, date_end)
-        logger.info(f"Nombre de chauffeurs disponibles : {len(chauffeurs)}")
-
-        #print("chauffeurs" , chauffeurs)
+        logger.info(f"→ {len(chauffeurs)} chauffeurs disponibles récupérés")
 
         # 2. Calcul des coûts
-        logger.debug("Calcul des coûts...")
-        solo_cost = {
-            (g['id'], c['id']): travel_time_single(c, g)
-            for g in groupes
-            for c in chauffeurs
-        }
-        
+        logger.info("Étape 2/4: Calcul des coûts...")
+        solo_cost = {}
         combo_cost = {}
-        for g1 in groupes:
-            for g2 in groupes:
-                if g1['id'] < g2['id']:  # Évite les doublons
-                    for c in chauffeurs:
-                        cost = combined_route_cost(c, g1, g2)
-                        if cost is not None:  # Ne garde que les routes réalisables
-                            combo_cost[(g1['id'], g2['id'], c['id'])] = cost
-
-        # Vérification qu'il y a des routes réalisables
-        if not combo_cost:
-            logger.warning("Aucune route combinée réalisable trouvée")
-            return []
-
-        # Vérification qu'il y a assez de routes pour le MILP
-        if len(combo_cost) < len(groupes) * len(chauffeurs):
-            logger.warning(f"Nombre limité de routes combinées réalisables: {len(combo_cost)}")
-
-        # 3. Résolution MILP initiale
-        logger.info(f"Lancement MILP (timeout={milp_time_limit}s)")
-        prob, status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-        milp_optimal = (pulp.LpStatus[status] == "Optimal")
-       
         
-        if milp_optimal:
-            assignments = extract_assignments(groupes, chauffeurs, x, y)
-            logger.info("Solution MILP optimale trouvée")
-        else:
-            logger.warning("Solution MILP non optimale, lancement recuit simulé")
-            assignments = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost)
+        logger.debug("Calcul des coûts solo...")
+        for g in groupes:
+            if 'duree_trajet_min' not in g: continue
+            for c in chauffeurs:
+                try:
+                    solo_cost[(g['id'],c['id'])] = travel_time_single(c,g)
+                except Exception as e:
+                    logger.warning(f"Erreur calcul coût solo groupe {g['id']} chauffeur {c['id']}: {str(e)}")
+        
+        logger.debug("Calcul des coûts combinés...")
+        for g1 in groupes:
+            if 't_min' not in g1: continue
+            for g2 in groupes:
+                if g1['id']>=g2['id'] or 't_min' not in g2: continue
+                if abs(g1['t_min']-g2['t_min'])<=45:
+                    for c in chauffeurs:
+                        if c['n']>=(g1['ng']+g2['ng']):
+                            cost = combined_route_cost(c,g1,g2)
+                            if cost is not None:
+                                combo_cost[(g1['id'],g2['id'],c['id'])]=cost
 
-        # 4. Traitement des groupes non couverts
-        non_couverts = groupes_non_couverts(assignments, groupes)
-        if non_couverts:
-            logger.warning(f"{len(non_couverts)} groupes non couverts, retraitement")
-            prob_nc, status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-            
-            milp_optimal_nc = (pulp.LpStatus[status_nc] == "Optimal")
-            
-            logger.info(f"Solution MILP  , retraitement GROUPES NON COUVERTS : {milp_optimal_nc}")
-            if milp_optimal_nc:
-                nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
-            else:
-                nc_assignments = heuristic_solution(non_couverts, chauffeurs, solo_cost, combo_cost)
-            
-            # Fusion des affectations
-            for g in non_couverts:
-                assignments.setdefault(g['id'], []).extend(nc_assignments.get(g['id'], []))
+        logger.info(f"→ {len(solo_cost)} coûts solo et {len(combo_cost)} coûts combinés calculés")
 
-        # 5. Sauvegarde des affectations
+        # 3. Résolution MILP
+        logger.info("Étape 3/4: Résolution MILP...")
+        logger.info(f"Lancement solveur MILP (timeout={milp_time_limit}s)")
+        prob, status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
+        assign = extract_assignments(groupes, chauffeurs, x, y)
+        
+        if pulp.LpStatus[status] != "Optimal":
+            logger.warning(f"Statut MILP non optimal: {pulp.LpStatus[status]} - Application heuristique")
+            assign = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, assign)
+
+        # Gestion des groupes non couverts
+        nc = [g for g in groupes if g['id'] not in assign or not assign[g['id']]]
+        if nc:
+            logger.warning(f"{len(nc)} groupes non couverts - Tentative résolution complémentaire")
+            prob2, s2, x2, y2 = solve_MILP(nc, chauffeurs, solo_cost, combo_cost, milp_time_limit)
+            sub = extract_assignments(nc, chauffeurs, x2, y2)
+            if pulp.LpStatus[s2] != "Optimal":
+                logger.warning("Résolution complémentaire non optimale - Application heuristique")
+                sub = heuristic_solution(nc, chauffeurs, solo_cost, combo_cost, assign)
+            for g in nc:
+                assign.setdefault(g['id'],[]).extend(sub.get(g['id'],[]))
+
+        # 4. Fallback glouton
+        logger.info("Étape 4/4: Vérification couverture complète...")
+        for g in groupes:
+            covered = sum(next(c for c in chauffeurs if c['id']==a['chauffeur'])['n'] for a in assign.get(g['id'],[]))
+            if covered < g['ng']:
+                rem = g['ng'] - covered
+                logger.warning(f"Groupe {g['id']} sous-couvert ({covered}/{g['ng']}) - Application fallback glouton")
+                for c in sorted(chauffeurs, key=lambda c:-c['n']):
+                    if rem <= 0: break
+                    if (g['id'],c['id']) in solo_cost and not(g['ng']<=4 and c['n']>4):
+                        assign[g['id']].append({"chauffeur":c['id'],"trajet":"simple"})
+                        rem -= c['n']
+
+        # 5. Sauvegarde
         logger.info("Sauvegarde des affectations...")
-        await save_affectations(ds, assignments)
+        await save_affectations(ds, assign)
 
         duration = time.perf_counter() - start_time
-        logger.info(f"Dispatch terminé en {duration:.2f} secondes")
-        return assignments
+        logger.info(f"=== DISPATCH TERMINÉ AVEC SUCCÈS ===")
+        logger.info(f"Temps total: {duration:.2f} secondes")
+        logger.info(f"Groupes traités: {len(groupes)}")
+        logger.info(f"Chauffeurs utilisés: {len({a['chauffeur'] for g in assign for a in assign[g]})}")
+        return assign
         
     except Exception as e:
-        logger.error(f"Échec après {time.perf_counter() - start_time:.2f} secondes", exc_info=True)
+        duration = time.perf_counter() - start_time
+        logger.error(f"=== ÉCHEC DU DISPATCH ===")
+        logger.error(f"Erreur après {duration:.2f} secondes")
+        logger.error(f"Type erreur: {type(e).__name__}")
+        logger.error(f"Détails: {str(e)}", exc_info=True)
         raise
 
 async def save_affectations(ds: PostgresDataSource, assignments):
@@ -877,6 +715,7 @@ async def save_affectations(ds: PostgresDataSource, assignments):
                             'date_heure_prise_en_charge', co.date_heure_prise_en_charge,
                             'lieu_prise_en_charge', co.lieu_prise_en_charge,
                             'destination', co.destination,
+                            'telephone_hebergement', co.telephone_hebergement,
                             'groupe_id', co.groupe_id
                         )
                     )
@@ -911,6 +750,11 @@ async def save_affectations(ds: PostgresDataSource, assignments):
                     SELECT cg.vip 
                     FROM courseGroupe cg 
                     WHERE cg.groupe_id = ca.groupe_id
+                ),
+                prenom_nom_list = (
+                    SELECT string_agg(DISTINCT co.prenom_nom, ' | ')
+                    FROM course co
+                    WHERE co.groupe_id = ca.groupe_id
                 ),
                 date_heure_prise_en_charge = (
                     SELECT cg.date_heure_prise_en_charge
