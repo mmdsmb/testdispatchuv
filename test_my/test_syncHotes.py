@@ -1,9 +1,15 @@
 from app.models.hotes import HotesSync
+from app.core.config import get_settings
 import asyncio
 
 async def main():
+    settings = get_settings()
     sync = HotesSync()
-    result = await sync.sync("1hVtUng_VuP1obHFjMeEJBjngE34FOFkm9J_4bgF7tPk", auto_apply=False)
+    # Le file_id sera automatiquement récupéré depuis HOTES_FILE_ID dans .env
+    
+    result = await sync.sync(settings.HOTES_FILE_ID,auto_apply=True)
     print(result)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

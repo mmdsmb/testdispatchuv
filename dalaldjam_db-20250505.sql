@@ -1,3 +1,13 @@
+
+-- Créez d'abord la fonction
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 create table chauffeurBronze (
     horodateur text,
     prenom_nom text,
@@ -25,6 +35,41 @@ create trigger set_updated_at
     before update on chauffeurBronze
     for each row
     execute function update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS "Hotes" (
+    "ID" INTEGER PRIMARY KEY,
+    "Prenom-Nom" TEXT,
+    "Telephone" TEXT,
+    "Nombre-prs-AR" TEXT,
+    "Provenance" TEXT,
+    "Arrivee-date" TEXT,
+    "Arrivee-vol" TEXT,
+    "Arrivee-heure" TEXT,
+    "Arrivee-Lieux" TEXT,
+    "Hebergeur" TEXT,
+    "RESTAURATION" TEXT,
+    "Telephone-hebergeur" TEXT,
+    "Adresse-hebergement" TEXT,
+    "Retour-date" TEXT,
+    "Nombre-prs-Ret" TEXT,
+    "Retour-vol" TEXT,
+    "Retour-heure" TEXT,
+    "Retour-Lieux" TEXT,
+    "Destination" TEXT,
+    "Chauffeur" TEXT
+);
+
+ALTER TABLE Hotes
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+-- Trigger pour mettre à jour updated_at
+create trigger set_updated_at
+    before update on "Hotes" 
+    for each row
+    execute function update_updated_at_column();
+
+
 
 CREATE TABLE IF NOT EXISTS dispoChauffeur (
 	chauffeur_id bigint NOT NULL,
