@@ -90,3 +90,15 @@ docker-compose.override.yml
 
 flask_app/*.xlsx
 flask_app/dalaldjam_db-20250324.sql
+flask_app/dalaldjam_db*.sql
+
+credentials/
+credentials/dispatchingchauffeur-481e58d1e194.json
+data/
+dalaldjam_db-20250505.sql
+dalaldjam_db-20250505.sql.zip
+chauffeurs2025.xlsx
+chauffeurs2025.xlsx.zip
+chauffeurs2025.csv
+chauffeurs2025.csv.zip
+dalaldjam_db-20250505.sql

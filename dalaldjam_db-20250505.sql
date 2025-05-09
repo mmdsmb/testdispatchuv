@@ -1,3 +1,31 @@
+create table chauffeurBronze (
+    horodateur text,
+    prenom_nom text,
+    telephone text,
+    email text primary key,
+    type_chauffeur text,
+    nombre_places text,
+    disponible_22_debut text,
+    disponible_22_fin text,
+    disponible_23_debut text,
+    disponible_23_fin text,
+    disponible_24_debut text,
+    disponible_24_fin text,
+    disponible_25_debut text,
+    disponible_25_fin text,
+    code_postal text,
+    carburant text,
+    commentaires text,
+    created_at timestamp with time zone default timezone('utc'::text, now()),
+    updated_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- Trigger pour mettre à jour updated_at
+create trigger set_updated_at
+    before update on chauffeurBronze
+    for each row
+    execute function update_updated_at_column();
+
 CREATE TABLE IF NOT EXISTS dispoChauffeur (
 	chauffeur_id bigint NOT NULL,
 	dispo_id serial NOT NULL,

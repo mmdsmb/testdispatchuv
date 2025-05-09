@@ -36,14 +36,9 @@ class PostgresDataSource(DataSource):
             self.conn = None
 
     async def execute_query(self, query: str, params: Optional[List[Any]] = None) -> List[Any]:
-        if not self.conn:
-            await self.connect()
-        
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(query, params or [])
-            if cursor.description is not None:
-                return await cursor.fetchall()
-        return []
+        """Exécute une requête unique avec gestion de transaction."""
+        # Réutilise execute_transaction pour garantir la cohérence
+        return await self.execute_transaction([(query, params)])
 
     async def execute_transaction(self, queries_with_params: List[tuple]) -> List[Any]:
         """Exécute plusieurs requêtes dans une transaction atomique."""

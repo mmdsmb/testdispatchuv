@@ -6,7 +6,7 @@ from pydantic import PostgresDsn, validator
 from pydantic_settings import BaseSettings
 import logging
 from pathlib import Path
-
+from functools import lru_cache
 # Détecter l'environnement CI
 IN_CI = os.environ.get("CI") == "true"
 IN_DOCKER = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER") == "true"
@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     DISPATCH_API_USERNAME: str = os.getenv("DISPATCH_API_USERNAME", "admin")
     DISPATCH_API_PASSWORD: str = os.getenv("DISPATCH_API_PASSWORD", "admin")
     
+    CHAUFFEURS_FILE_ID: str = os.getenv("CHAUFFEURS_FILE_ID", "")
+    HOTES_FILE_ID: str = os.getenv("HOTES_FILE_ID", "")
+    
+    # Chemin du fichier de credentials Google Drive
+    GOOGLE_DRIVE_CREDENTIALS_PATH: str = os.getenv("GOOGLE_DRIVE_CREDENTIALS_PATH", "credentials/dispatchingchauffeur-481e58d1e194.json")
+    GOOGLE_CREDENTIALS_BASE64: str = os.getenv("GOOGLE_CREDENTIALS_BASE64", "")
     # Override database settings for CI environment
     if IN_CI:
         DB_HOST = "localhost"
@@ -106,3 +112,9 @@ else:
             logging.StreamHandler()
         ]
     ) 
+    
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Retourne les paramètres de configuration en cache."""
+    return settings 
