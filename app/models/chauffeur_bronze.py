@@ -120,9 +120,24 @@ class ChauffeurBronzeSync:
         try:
             df = pd.read_excel(file_path)
             df = df.where(pd.notnull(df), None)
-            return [ChauffeurBronze(**row) for _, row in df.iterrows()]
+            
+            # Filtrage des lignes invalides
+            df = df[df["Email"].notnull()]
+            
+            chauffeurs = []
+            for _, row in df.iterrows():
+                try:
+                    chauffeur = ChauffeurBronze(**row)
+                    chauffeurs.append(chauffeur)
+                except Exception as e:
+                    logger.error(f"Erreur lors de la validation de la ligne : {row}")
+                    logger.error(f"Erreur : {e}")
+                    continue
+                
+            logger.info(f"Nombre de lignes valides lues : {len(chauffeurs)}")
+            return chauffeurs
         except Exception as e:
-            logger.error(f"Erreur de lecture : {e}")
+            logger.error(f"Erreur de lecture du fichier Excel : {e}")
             raise
 
     async def get_existing_chauffeurs(self) -> Dict[str, Dict]:
@@ -141,108 +156,166 @@ class ChauffeurBronzeSync:
         }
 
         for chauffeur in file_chauffeurs:
-            chauffeur_dict = self.map_to_supabase_fields(chauffeur.dict(by_alias=True))
-            existing = existing_chauffeurs.get(chauffeur.email)
+            # Convertir en dict et mapper les champs
+            chauffeur_dict = chauffeur.dict(by_alias=True)
+            mapped_data = self.map_to_supabase_fields(chauffeur_dict)
+            
+            if not mapped_data:
+                logger.error(f"Données invalides pour le chauffeur : {chauffeur_dict}")
+                continue
+
+            existing = existing_chauffeurs.get(mapped_data['email'])
 
             if not existing:
-                changes['to_insert'].append(chauffeur_dict)
+                changes['to_insert'].append(mapped_data)
             else:
-                if chauffeur_dict != existing:
+                if mapped_data != existing:
                     changes['to_update'].append({
-                        'email': chauffeur.email,
+                        'email': mapped_data['email'],
                         'changes': {
                             field: {'old': existing.get(field), 'new': value}
-                            for field, value in chauffeur_dict.items()
+                            for field, value in mapped_data.items()
                             if field != 'email' and existing.get(field) != value
-                        }
+                        },
+                        'new_data': mapped_data
                     })
                 else:
-                    changes['unchanged'].append(chauffeur.email)
+                    changes['unchanged'].append(mapped_data['email'])
         
-        # logger.info(f"Résultats de la comparaison : {changes}")  # À commenter
+        logger.info(f"Résultats de la comparaison : {len(changes['to_insert'])} insertions, "
+                    f"{len(changes['to_update'])} mises à jour, "
+                    f"{len(changes['unchanged'])} inchangés")
         return changes
 
     async def apply_changes(self, changes: Dict) -> Dict:
         try:
-            if changes['to_insert']:
-                validated_data = []
-                for item in changes['to_insert']:
-                    mapped_data = self.map_to_supabase_fields(item)
-                    validated_data.append(mapped_data)
+            # Récupérer les données à insérer
+            validated_data = []
+            for item in changes['to_insert']:
+                if not item.get('email'):
+                    logger.warning(f"Ligne ignorée : email manquant. Données : {item}")
+                    continue
+                validated_data.append(item)
 
-                await self.db.connect()
-                
-                if validated_data:
-                    columns = list(validated_data[0].keys())
-                    placeholders = ', '.join(['%s'] * len(columns))
-                    query = f"""
-                    INSERT INTO chauffeurbronze ({', '.join(columns)})
-                    VALUES ({placeholders})
-                    ON CONFLICT (email) DO UPDATE SET
-                        {', '.join([f'"{col}" = EXCLUDED."{col}"' for col in columns if col != 'email'])}
-                    """
-                    
-                    logger.info(f"Nombre de lignes à insérer : {len(validated_data)}")
-                    logger.debug(f"Requête générée : {query}")
+            # Récupérer les données à mettre à jour (reconstituer la ligne complète)
+            for update in changes['to_update']:
+                # Vous devez avoir accès à la nouvelle version complète de la ligne
+                # Si ce n'est pas le cas, il faut la retrouver dans le fichier Excel ou la stocker dans compare_data
+                # Supposons que vous stockez la nouvelle version complète dans update['new_data']
+                if 'new_data' in update and update['new_data'].get('email'):
+                    validated_data.append(update['new_data'])
+                else:
+                    logger.warning(f"Ligne de mise à jour ignorée (incomplète) : {update}")
 
-                    # Exécuter chaque ligne dans une transaction
-                    for data in validated_data:
-                        values = list(data.values())
-                        await self.db.execute_query(query, values)
+            if not validated_data:
+                return {'success': False, 'error': 'Aucune donnée valide à insérer ou mettre à jour'}
 
-                return {'success': True}
+            await self.db.connect()
+            columns = list(validated_data[0].keys())
+            placeholders = ', '.join(['%s'] * len(columns))
+            query = f"""
+            INSERT INTO chauffeurbronze ({', '.join(columns)})
+            VALUES ({placeholders})
+            ON CONFLICT (email) DO UPDATE SET
+                {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col != 'email'])}
+            """
+
+            queries_with_params = []
+            for data in validated_data:
+                values = list(data.values())
+                queries_with_params.append((query, values))
+
+            try:
+                await self.db.execute_transaction(queries_with_params)
+                logger.info(f"{len(validated_data)} lignes insérées/mises à jour avec succès")
+                return {'success': True, 'message': f"{len(validated_data)} lignes traitées"}
+            except Exception as e:
+                logger.error(f"Erreur lors de l'exécution de la transaction : {e}")
+                return {'success': False, 'error': str(e)}
+
         except Exception as e:
-            logger.error(f"Erreur upsert : {e}")
+            logger.error(f"Erreur dans apply_changes : {e}")
             return {'success': False, 'error': str(e)}
         finally:
             await self.db.disconnect()
 
     async def sync(self, file_id: str, auto_apply: bool = False) -> Dict:
         try:
-            # (1) Téléchargement
+            # Téléchargement du fichier
             file_path = self.download_from_drive(file_id)
-            logger.info(f"Fichier téléchargé avec succès : {file_path}")
+            logger.info(f"Fichier téléchargé : {file_path}")
 
-            # (2) Lecture Excel
+            # Lecture des données
             file_chauffeurs = self.read_excel(file_path)
-            #logger.info(f"Nombre de lignes lues : {len(file_chauffeurs)} | Exemple : {file_chauffeurs[0].dict() if file_chauffeurs else 'Aucune donnée'}")
+            logger.info(f"Nombre de chauffeurs lus : {len(file_chauffeurs)}")
 
-            # (3) Récupération des données existantes
+            # Récupération des données existantes
             existing_chauffeurs = await self.get_existing_chauffeurs()
-            logger.info(f"Nombre d'entrées existantes : {len(existing_chauffeurs)}")
+            logger.info(f"Nombre de chauffeurs existants : {len(existing_chauffeurs)}")
 
-            # (4) Comparaison
+            # Comparaison et préparation des changements
             changes = self.compare_data(file_chauffeurs, existing_chauffeurs)
-            #logger.info(f"Résultats de la comparaison : {changes}")
+            logger.info(f"Changements à appliquer : {len(changes['to_insert'])} insertions")
 
-            # (5) Application
+            # Application des changements si auto_apply est True
             if auto_apply:
                 result = await self.apply_changes(changes)
-                #logger.info(f"Résultat de l'application : {result}")
                 return result
 
             return {"status": "Preview mode", "changes": changes}
         except Exception as e:
-            logger.error(f"ERREUR GLOBALE : {str(e)}", exc_info=True)
+            logger.error(f"Erreur lors de la synchronisation : {e}")
             return {"success": False, "error": str(e)}
 
     def map_to_supabase_fields(self, chauffeur_dict: Dict) -> Dict:
-        return {
-            "horodateur": chauffeur_dict.get("Horodateur"),
-            "prenom_nom": chauffeur_dict.get("Prénom et Nom"),
-            "telephone": chauffeur_dict.get("Numéro de téléphone (WhatsApp)"),
-            "email": chauffeur_dict.get("Email"),
-            "type_chauffeur": chauffeur_dict.get("Seriez-vous disponible en tant   ?"),
-            "nombre_places": chauffeur_dict.get("Nombre de places de votre voiture sans le chauffeur ?"),
-            "disponible_22_debut": chauffeur_dict.get("Disponible le 22/05/2025 à partir de"),
-            "disponible_22_fin": chauffeur_dict.get("Disponible le 22/05/2025 jusqu'à"),
-            "disponible_23_debut": chauffeur_dict.get("Disponible le 23/05/2025 à partir de"),
-            "disponible_23_fin": chauffeur_dict.get("Disponible le 23/05/2025 jusqu'à"),
-            "disponible_24_debut": chauffeur_dict.get("Disponible le 24/05/2025 à partir de"),
-            "disponible_24_fin": chauffeur_dict.get("Disponible le 24/05/2025 jusqu'à"),
-            "disponible_25_debut": chauffeur_dict.get("Disponible le 25/05/2025 à partir de"),
-            "disponible_25_fin": chauffeur_dict.get("Disponible le 25/05/2025 jusqu'à"),
-            "code_postal": chauffeur_dict.get("Votre code postal"),
-            "carburant": chauffeur_dict.get("Carburant"),
-            "commentaires": chauffeur_dict.get("Commentaires, remarques ou suggestions")
-        }
+        """
+        Mappe les champs du fichier Excel vers les colonnes de la table Supabase.
+        """
+        try:
+            mapped = {
+                "horodateur": chauffeur_dict.get("Horodateur"),
+                "prenom_nom": chauffeur_dict.get("Prénom et Nom"),
+                "telephone": chauffeur_dict.get("Numéro de téléphone (WhatsApp)"),
+                "email": chauffeur_dict.get("Email"),
+                "type_chauffeur": chauffeur_dict.get("Seriez-vous disponible en tant   ?"),
+                "nombre_places": chauffeur_dict.get("Nombre de places de votre voiture sans le chauffeur ?"),
+                "disponible_22_debut": chauffeur_dict.get("Disponible le 22/05/2025 à partir de"),
+                "disponible_22_fin": chauffeur_dict.get("Disponible le 22/05/2025 jusqu'à"),
+                "disponible_23_debut": chauffeur_dict.get("Disponible le 23/05/2025 à partir de"),
+                "disponible_23_fin": chauffeur_dict.get("Disponible le 23/05/2025 jusqu'à"),
+                "disponible_24_debut": chauffeur_dict.get("Disponible le 24/05/2025 à partir de"),
+                "disponible_24_fin": chauffeur_dict.get("Disponible le 24/05/2025 jusqu'à"),
+                "disponible_25_debut": chauffeur_dict.get("Disponible le 25/05/2025 à partir de"),
+                "disponible_25_fin": chauffeur_dict.get("Disponible le 25/05/2025 jusqu'à"),
+                "code_postal": chauffeur_dict.get("Votre code postal"),
+                "carburant": chauffeur_dict.get("Carburant"),
+                "commentaires": chauffeur_dict.get("Commentaires, remarques ou suggestions")
+            }
+            
+            # Validation des champs obligatoires
+            if not mapped["email"]:
+                logger.error(f"Email manquant dans les données : {chauffeur_dict}")
+                return None
+            
+            # Convertir les objets time en chaînes
+            for key in mapped:
+                if isinstance(mapped[key], time):
+                    mapped[key] = mapped[key].strftime("%H:%M")
+                
+            return mapped
+        except Exception as e:
+            logger.error(f"Erreur lors du mapping des champs : {e}")
+            return None
+
+    def validate_data(self, data: Dict) -> bool:
+        """
+        Valide les données avant insertion.
+        """
+        required_fields = ["email", "prenom_nom", "telephone", "code_postal"]
+        
+        for field in required_fields:
+            if not data.get(field):
+                logger.error(f"Champ obligatoire manquant : {field}")
+                return False
+            
+        return True
