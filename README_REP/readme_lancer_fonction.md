@@ -21,4 +21,8 @@ python test_dispatch.py --date-begin 2024-01-01 --date-end 2024-01-31 --milp_tim
 # Pour exécuter sans paramètres (utilisera les valeurs par défaut)
 python test_dispatch.py
 
+python -m test_my.test_syncHotes
+
+python -m test_my.test_syncChauffeur
+
 ```

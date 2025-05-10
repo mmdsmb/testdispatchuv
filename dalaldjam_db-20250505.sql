@@ -30,6 +30,10 @@ create table chauffeurBronze (
     updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
+ALTER TABLE chauffeurBronze
+ADD COLUMN IF NOT EXISTS evenement_annee INTEGER,
+ADD COLUMN IF NOT EXISTS evenement_jour TEXT;
+
 -- Trigger pour mettre à jour updated_at
 create trigger set_updated_at
     before update on chauffeurBronze
@@ -59,7 +63,9 @@ CREATE TABLE IF NOT EXISTS "Hotes" (
     "Chauffeur" TEXT
 );
 
-ALTER TABLE Hotes
+ALTER TABLE "Hotes"
+ADD COLUMN IF NOT EXISTS evenement_annee INTEGER,
+ADD COLUMN IF NOT EXISTS evenement_jour TEXT,
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 

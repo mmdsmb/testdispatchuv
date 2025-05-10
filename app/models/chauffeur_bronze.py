@@ -41,6 +41,8 @@ class ChauffeurBronze(BaseModel):
     code_postal: str = Field(..., alias="Votre code postal")
     carburant: Optional[str] = Field(None, alias="Carburant")
     commentaires: Optional[str] = Field(None, alias="Commentaires, remarques ou suggestions")
+    evenement_annee: Optional[str] = None
+    evenement_jour: Optional[str] = None
 
     @field_validator('code_postal', mode='before')
     def code_postal_to_str(cls, v):
@@ -156,7 +158,6 @@ class ChauffeurBronzeSync:
         }
 
         for chauffeur in file_chauffeurs:
-            # Convertir en dict et mapper les champs
             chauffeur_dict = chauffeur.dict(by_alias=True)
             mapped_data = self.map_to_supabase_fields(chauffeur_dict)
             
@@ -169,14 +170,18 @@ class ChauffeurBronzeSync:
             if not existing:
                 changes['to_insert'].append(mapped_data)
             else:
-                if mapped_data != existing:
+                # Ne pas inclure les champs evenement dans les changements s'ils existent déjà
+                changes_dict = {}
+                for field, value in mapped_data.items():
+                    if field in ['evenement_annee', 'evenement_jour'] and existing.get(field) is not None:
+                        continue
+                    if field != 'email' and existing.get(field) != value:
+                        changes_dict[field] = value
+
+                if changes_dict:
                     changes['to_update'].append({
                         'email': mapped_data['email'],
-                        'changes': {
-                            field: {'old': existing.get(field), 'new': value}
-                            for field, value in mapped_data.items()
-                            if field != 'email' and existing.get(field) != value
-                        },
+                        'changes': changes_dict,
                         'new_data': mapped_data
                     })
                 else:
@@ -189,58 +194,48 @@ class ChauffeurBronzeSync:
 
     async def apply_changes(self, changes: Dict) -> Dict:
         try:
-            # Récupérer les données à insérer
-            validated_data = []
-            for item in changes['to_insert']:
-                if not item.get('email'):
-                    logger.warning(f"Ligne ignorée : email manquant. Données : {item}")
-                    continue
-                validated_data.append(item)
+            # Récupérer la configuration
+            settings = get_settings()
+            jour_evenement = settings.JOUR_EVENEMENT
+            evenement_annee = jour_evenement.split('-')[0] if jour_evenement else None
+            evenement_jour = jour_evenement if jour_evenement else None
 
-            # Récupérer les données à mettre à jour (reconstituer la ligne complète)
+            if changes['to_insert']:
+                # Ajouter les champs evenement aux insertions seulement s'ils sont null
+                for chauffeur in changes['to_insert']:
+                    if chauffeur.get('evenement_annee') is None:
+                        chauffeur['evenement_annee'] = evenement_annee
+                    if chauffeur.get('evenement_jour') is None:
+                        chauffeur['evenement_jour'] = evenement_jour
+                
+                self.supabase.table('chauffeurbronze').insert(changes['to_insert']).execute()
+                logger.info(f"{len(changes['to_insert'])} nouveaux chauffeurs insérés")
+
             for update in changes['to_update']:
-                # Vous devez avoir accès à la nouvelle version complète de la ligne
-                # Si ce n'est pas le cas, il faut la retrouver dans le fichier Excel ou la stocker dans compare_data
-                # Supposons que vous stockez la nouvelle version complète dans update['new_data']
-                if 'new_data' in update and update['new_data'].get('email'):
-                    validated_data.append(update['new_data'])
-                else:
-                    logger.warning(f"Ligne de mise à jour ignorée (incomplète) : {update}")
+                # Ne pas forcer la mise à jour des champs evenement s'ils existent déjà
+                if update['changes'].get('evenement_annee') is None:
+                    update['changes']['evenement_annee'] = evenement_annee
+                if update['changes'].get('evenement_jour') is None:
+                    update['changes']['evenement_jour'] = evenement_jour
+                
+                self.supabase.table('chauffeurbronze').update(update['changes']).eq('email', update['email']).execute()
+                logger.info(f"Mise à jour du chauffeur email {update['email']}")
 
-            if not validated_data:
-                return {'success': False, 'error': 'Aucune donnée valide à insérer ou mettre à jour'}
-
-            await self.db.connect()
-            columns = list(validated_data[0].keys())
-            placeholders = ', '.join(['%s'] * len(columns))
-            query = f"""
-            INSERT INTO chauffeurbronze ({', '.join(columns)})
-            VALUES ({placeholders})
-            ON CONFLICT (email) DO UPDATE SET
-                {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col != 'email'])}
-            """
-
-            queries_with_params = []
-            for data in validated_data:
-                values = list(data.values())
-                queries_with_params.append((query, values))
-
-            try:
-                await self.db.execute_transaction(queries_with_params)
-                logger.info(f"{len(validated_data)} lignes insérées/mises à jour avec succès")
-                return {'success': True, 'message': f"{len(validated_data)} lignes traitées"}
-            except Exception as e:
-                logger.error(f"Erreur lors de l'exécution de la transaction : {e}")
-                return {'success': False, 'error': str(e)}
-
+            return {'success': True, 'message': 'Changements appliqués avec succès'}
         except Exception as e:
             logger.error(f"Erreur dans apply_changes : {e}")
             return {'success': False, 'error': str(e)}
-        finally:
-            await self.db.disconnect()
 
     async def sync(self, file_id: str, auto_apply: bool = False) -> Dict:
         try:
+            # Récupérer la configuration
+            settings = get_settings()
+            jour_evenement = settings.JOUR_EVENEMENT
+            
+            # Extraire l'année et le jour de la date
+            evenement_annee = jour_evenement.split('-')[0] if jour_evenement else None
+            evenement_jour = jour_evenement if jour_evenement else None
+
             # Téléchargement du fichier
             file_path = self.download_from_drive(file_id)
             logger.info(f"Fichier téléchargé : {file_path}")
@@ -248,6 +243,13 @@ class ChauffeurBronzeSync:
             # Lecture des données
             file_chauffeurs = self.read_excel(file_path)
             logger.info(f"Nombre de chauffeurs lus : {len(file_chauffeurs)}")
+
+            # Ajouter les champs evenement_annee et evenement_jour à chaque chauffeur seulement s'ils sont null
+            for chauffeur in file_chauffeurs:
+                if chauffeur.evenement_annee is None:
+                    chauffeur.evenement_annee = evenement_annee
+                if chauffeur.evenement_jour is None:
+                    chauffeur.evenement_jour = evenement_jour
 
             # Récupération des données existantes
             existing_chauffeurs = await self.get_existing_chauffeurs()
@@ -289,7 +291,9 @@ class ChauffeurBronzeSync:
                 "disponible_25_fin": chauffeur_dict.get("Disponible le 25/05/2025 jusqu'à"),
                 "code_postal": chauffeur_dict.get("Votre code postal"),
                 "carburant": chauffeur_dict.get("Carburant"),
-                "commentaires": chauffeur_dict.get("Commentaires, remarques ou suggestions")
+                "commentaires": chauffeur_dict.get("Commentaires, remarques ou suggestions"),
+                "evenement_annee": chauffeur_dict.get("evenement_annee"),
+                "evenement_jour": chauffeur_dict.get("evenement_jour")
             }
             
             # Validation des champs obligatoires

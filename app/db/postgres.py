@@ -61,7 +61,7 @@ class PostgresDataSource(DataSource):
             async with self.conn.cursor() as cursor:
                 for query, params in queries_with_params:
                     # Gestion spéciale pour WITH et requêtes complexes
-                    logger.debug(f"Exécution dans transaction: {query}")
+                    #logger.debug(f"Exécution dans transaction: {query}")
                     await cursor.execute(query, params or [])
                     
                     # Capture des résultats si présents

@@ -37,6 +37,8 @@ class Hotes(BaseModel):
     Retour_Lieux: Optional[str] = Field(None, alias="Retour-Lieux")
     Destination: Optional[str] = None
     Chauffeur: Optional[str] = None
+    evenement_annee: Optional[str] = None
+    evenement_jour: Optional[str] = None
 
     class Config:
         allow_population_by_field_name = True
@@ -161,18 +163,18 @@ class HotesSync:
             if not existing:
                 changes['to_insert'].append(host_dict)
             else:
-                for field in host.__fields__:
-                    if isinstance(existing.get(field), datetime):
-                        existing[field] = existing[field].strftime('%d-%m-%Y')
+                # Ne pas inclure les champs evenement dans les changements s'ils existent déjà
+                changes_dict = {}
+                for field, value in host_dict.items():
+                    if field in ['evenement_annee', 'evenement_jour'] and existing.get(field) is not None:
+                        continue
+                    if field != 'ID' and existing.get(field) != value:
+                        changes_dict[field] = value
 
-                if host_dict != existing:
+                if changes_dict:
                     changes['to_update'].append({
                         'id': host.ID,
-                        'changes': {
-                            field: {'old': existing.get(field), 'new': value}
-                            for field, value in host_dict.items()
-                            if field != 'ID' and existing.get(field) != value
-                        }
+                        'changes': changes_dict
                     })
                 else:
                     changes['unchanged'].append(host.ID)
@@ -183,25 +185,48 @@ class HotesSync:
     async def apply_changes(self, changes: Dict) -> Dict:
         """Applique les changements dans Supabase"""
         try:
+            # Récupérer la configuration
+            settings = get_settings()
+            jour_evenement = settings.JOUR_EVENEMENT
+            evenement_annee = jour_evenement.split('-')[0] if jour_evenement else None
+            evenement_jour = jour_evenement if jour_evenement else None
+
             if changes['to_insert']:
+                # Ajouter les champs evenement aux insertions seulement s'ils sont null
+                for hote in changes['to_insert']:
+                    if hote.get('evenement_annee') is None:
+                        hote['evenement_annee'] = evenement_annee
+                    if hote.get('evenement_jour') is None:
+                        hote['evenement_jour'] = evenement_jour
+                
                 self.supabase.table(self.TABLE_NAME).insert(changes['to_insert']).execute()
                 logger.info(f"{len(changes['to_insert'])} nouveaux hôtes insérés")
 
             for update in changes['to_update']:
+                # Ne pas forcer la mise à jour des champs evenement s'ils existent déjà
+                if update['changes'].get('evenement_annee') is None:
+                    update['changes']['evenement_annee'] = evenement_annee
+                if update['changes'].get('evenement_jour') is None:
+                    update['changes']['evenement_jour'] = evenement_jour
+                
                 self.supabase.table(self.TABLE_NAME).update(update['changes']).eq('ID', update['id']).execute()
                 logger.info(f"Mise à jour de l'hôte ID {update['id']}")
 
-            return {
-                'success': True,
-                'inserted': len(changes['to_insert']),
-                'updated': len(changes['to_update'])
-            }
+            return {'success': True, 'message': 'Changements appliqués avec succès'}
         except Exception as e:
             logger.error(f"Erreur lors de l'application des changements : {e}")
             return {'success': False, 'error': str(e)}
 
     async def sync(self, file_id: str = None, auto_apply: bool = False) -> Dict:
         try:
+            # Récupérer la configuration
+            settings = get_settings()
+            jour_evenement = settings.JOUR_EVENEMENT  # Assurez-vous que cette variable existe dans votre config
+            
+            # Extraire l'année et le jour de la date
+            evenement_annee = jour_evenement.split('-')[0] if jour_evenement else None
+            evenement_jour = jour_evenement if jour_evenement else None
+
             # Si file_id n'est pas fourni, utiliser celui de l'environnement
             if file_id is None:
                 file_id = os.getenv('HOTES_FILE_ID')
@@ -215,6 +240,13 @@ class HotesSync:
             # Lecture des données
             file_hotes = self.read_excel(file_path)
             logger.info(f"Nombre d'hôtes lus : {len(file_hotes)}")
+
+            # Ajouter les champs evenement_annee et evenement_jour seulement s'ils sont null
+            for hote in file_hotes:
+                if hote.evenement_annee is None:
+                    hote.evenement_annee = evenement_annee
+                if hote.evenement_jour is None:
+                    hote.evenement_jour = evenement_jour
 
             # Récupération des données existantes
             existing_hotes = await self.get_existing_hosts()
