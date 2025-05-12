@@ -3,13 +3,14 @@ from app.models.chauffeur_bronze import ChauffeurBronzeSync
 from fastapi import Depends
 from functools import lru_cache
 import os
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     chauffeurs_file_id: str
 
-    class Config:
-        env_file = ".env"
+    model_config = {
+        "env_file": ".env"
+    }
 
 @lru_cache()
 def get_settings():

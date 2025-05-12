@@ -15,6 +15,7 @@ import base64
 from tempfile import NamedTemporaryFile
 from pydantic import field_validator
 from app.db.postgres import PostgresDataSource
+from pydantic_settings import BaseSettings
 
 
 # Configuration du logging

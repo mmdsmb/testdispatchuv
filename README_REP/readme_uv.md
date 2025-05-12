@@ -1,4 +1,3 @@
-
 0. Clone the repository:
 ```bash
 git clone <your-repo-url>
@@ -44,3 +43,27 @@ uv pip install -e .
 uv pip install "psycopg[binary]"
 
 ```
+
+
+Pour exécuter les cellules dans le notebook avec l'environnement .venv (Python 3.9.22), vous devez d'abord installer le package ipykernel dans cet environnement. Voici les étapes à suivre :
+Activer l'environnement virtuel :
+Si vous utilisez un terminal, naviguez vers le répertoire du projet et activez l'environnement virtuel .venv.
+Installer ipykernel :
+
+```bash
+uv pip install ipykernel
+```
+
+
+mis a  jour uv
+```bash
+uv pip uninstall uv
+
+#upgrade uv
+uv pip install --upgrade uv
+
+
+```
+
+```bash
+uv --version

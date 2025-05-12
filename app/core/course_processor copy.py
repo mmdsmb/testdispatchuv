@@ -6,7 +6,6 @@ import logging
 from app.core.config import settings , get_settings , LIEUX_MAPPING_ADRESSE
 import httpx
 import pandas as pd
-from app.core.utils import format_heure
 
 logger = logging.getLogger(__name__)
 
@@ -244,69 +243,19 @@ class CourseProcessor:
             
             # Récupérer les configurations
             settings = get_settings()
+            LIEUX_MAPPING_ADRESSE = settings.LIEUX_MAPPING_ADRESSE
             JOUR_EVENEMENT = settings.JOUR_EVENEMENT
             JOUR_FIN_EVENEMENT = settings.JOUR_FIN_EVENEMENT
             ADRESSE_SALLE = settings.ADRESSE_SALLE.lower()
             PAYS_ORGANISATEUR = settings.PAYS_ORGANISATEUR.lower()
             
-            # Récupérer les données de la table Hotes avec execute_query
-            columns = ["ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux", "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement", "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure", "Retour-Lieux", "Destination", "Chauffeur"]
-            query = """ 
-            SELECT  "ID" ,
-                "Prenom-Nom" ,
-                "Telephone" ,
-                "Nombre-prs-AR" ,
-                "Provenance" ,
-                "Arrivee-date" ,
-                "Arrivee-vol" ,
-                "Arrivee-heure" ,
-                "Arrivee-Lieux" ,
-                "Hebergeur" ,
-                "RESTAURATION" ,
-                "Telephone-hebergeur" ,
-                "Adresse-hebergement" ,
-                "Retour-date" ,
-                "Nombre-prs-Ret" ,
-                "Retour-vol" ,
-                "Retour-heure" ,
-                "Retour-Lieux" ,
-                "Destination" ,
-                "Chauffeur"  
-                FROM "Hotes" where evenement_annee = 2024
-                and "ID" is not null
-                and "Prenom-Nom" is not null
-                and (
-                        (
-                            "Nombre-prs-AR" is not null
-                            and "Arrivee-date" is not null
-                            and "Arrivee-vol" is not null
-                            and "Arrivee-heure" is not null
-                            and "Arrivee-Lieux" is not null
-                            and "Adresse-hebergement" is not null
-                            ) 
-                            or 
-                            (
-                            "Retour-date" is not null
-                            and "Nombre-prs-Ret" is not null
-                            and "Retour-vol" is not null
-                            and "Retour-heure" is not null
-                            and "Retour-Lieux" is not null
-                            )
-                )
-                LIMIT 7
-                ;
-                """
-            #query = 'SELECT * FROM "Hotes" where evenement_annee = 2024 ;'
-            hotes_data = await self.ds.execute_query(query)
-            
-            # Convertir les données en DataFrame
-            data_df = pd.DataFrame(hotes_data, columns=columns)
-            
+            # Récupérer les données de la table Hotes
+            response = self.supabase.table('Hotes').select('*').execute()
+            data_df = pd.DataFrame(response.data)
             
             print("Debut transformation initiale")
             
             # Nettoyer les noms de colonnes
-            
             data_df.columns = data_df.columns.str.strip()
             
             # Conversion des colonnes de date et heure
@@ -422,50 +371,31 @@ class CourseProcessor:
             await self.update_distance_course(courses_df, dict_address)
             print("Fin update_distance")
             
-            # Upsert dans la table course avec execute_transaction
-            for _, row in courses_df.iterrows():
-                insert_query = """
-                    INSERT INTO course (
-                        prenom_nom, telephone, nombre_personne,
-                        lieu_prise_en_charge_court, lieu_prise_en_charge,
-                        date_heure_prise_en_charge, num_vol,
-                        destination_court, destination,
-                        hebergeur, telephone_hebergement,
-                        hote_id, vip, evenement_annee, evenement_jour
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                    )
-                    ON CONFLICT (hote_id, date_heure_prise_en_charge) 
-                    DO UPDATE SET
-                        prenom_nom = EXCLUDED.prenom_nom,
-                        telephone = EXCLUDED.telephone,
-                        nombre_personne = EXCLUDED.nombre_personne,
-                        lieu_prise_en_charge_court = EXCLUDED.lieu_prise_en_charge_court,
-                        lieu_prise_en_charge = EXCLUDED.lieu_prise_en_charge,
-                        num_vol = EXCLUDED.num_vol,
-                        destination_court = EXCLUDED.destination_court,
-                        destination = EXCLUDED.destination,
-                        hebergeur = EXCLUDED.hebergeur,
-                        telephone_hebergement = EXCLUDED.telephone_hebergement,
-                        vip = EXCLUDED.vip,
-                        evenement_annee = EXCLUDED.evenement_annee,
-                        evenement_jour = EXCLUDED.evenement_jour
-                """
-                params = [
-                    row['prenom_nom'], row['telephone'], row['nombre_personne'],
-                    row['lieu_prise_en_charge_court'], row['lieu_prise_en_charge'],
-                    row['date_heure_prise_en_charge'], row.get('num_vol'),
-                    row['destination_court'], row['destination'],
-                    row.get('hebergeur'), row.get('telephone_hebergement'),
-                    row['hote_id'], row.get('vip', False),
-                    row['evenement_annee'], row['evenement_jour']
-                ]
-                
-                await self.ds.execute_transaction([(insert_query, params)])
+            # Upsert dans la table course
+            await self.upsert_courses(courses_df)
             
             print("FIN genererCourse")
             return courses_df
             
         except Exception as e:
             logger.error(f"Erreur dans genererCourse : {e}")
+            raise
+
+    async def upsert_courses(self, courses_df: pd.DataFrame):
+        """
+        Effectue un upsert des courses dans la table course.
+        """
+        try:
+            # Préparer les données pour l'upsert
+            courses_data = courses_df.to_dict('records')
+            
+            # Effectuer l'upsert
+            response = self.supabase.table('course').upsert(
+                courses_data,
+                on_conflict='hote_id,date_heure_prise_en_charge'  # Clé composite pour l'upsert
+            ).execute()
+            
+            return response
+        except Exception as e:
+            logger.error(f"Erreur lors de l'upsert des courses : {e}")
             raise
