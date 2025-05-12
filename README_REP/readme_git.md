@@ -13,8 +13,8 @@ git commit -m "Initial commit"
 ```bash
 git config --global user.name "mmdsmb"
 git config --global user.email "mmdsmb@gmail.com"
-git remote add origin https://github.com/mmdsmb/testdispatchuv.git
-git remote set-url origin git@github.com:mmdsmb/testdispatchuv.git
+git remote set-url origin git@github.com:mmdsmb/testdispatchuv.git #  pour SSH et gérénétion de clé
+git remote set-url origin https://github.com/mmdsmb/testdispatchuv.git # pour repo public
 git push -u origin main
 ```
 

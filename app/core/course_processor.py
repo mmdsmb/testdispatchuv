@@ -23,9 +23,8 @@ logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 class CourseProcessor:
     def __init__(self, ds):
         self.ds = ds
-        #self.api_key = "AIzaSyAQWAj6hmmEkt45CFPWu1fQCi7b3_xxxxx"  # À remplacer par votre clé API
-        self.api_key = settings.GOOGLE_MAPS_API_KEY
-        
+        self.logger = logging.getLogger(__name__)
+
     def _generate_hash(self, text: str) -> str:
         """Génère un hash MD5 d'une chaîne de caractères"""
         return hashlib.md5(text.encode()).hexdigest()
@@ -231,241 +230,267 @@ class CourseProcessor:
             logger.error(f"Erreur lors du traitement de la course {course_id}: {str(e)}")
             raise
 
-    async def genererCourse(self, date_debut: str, date_fin: str) -> pd.DataFrame:
+    async def genererCourse(self, date_debut: str, date_fin: str, passed_year:int) -> pd.DataFrame:
         """
-        Génère les courses à partir des données de la table Hotes.
-        
-        Args:
-            date_debut: Date de début de la période
-            date_fin: Date de fin de la période
+        Génère les courses en séparant le traitement des courses aller, retour et vers la salle.
+        Prend en compte les erreurs pour ne pas générer de courses si des erreurs sont présentes.
         """
         try:
-            print("DEBUT genererCourse")
-            
+            self.logger.info("DEBUT genererCourse")
+
             # Récupérer les configurations
             settings = get_settings()
             JOUR_EVENEMENT = settings.JOUR_EVENEMENT
-            JOUR_FIN_EVENEMENT = settings.JOUR_FIN_EVENEMENT
             ADRESSE_SALLE = settings.ADRESSE_SALLE.lower()
             PAYS_ORGANISATEUR = settings.PAYS_ORGANISATEUR.lower()
-            
-            # Récupérer les données de la table Hotes avec execute_query
-            columns = ["ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux", "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement", "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure", "Retour-Lieux", "Destination", "Chauffeur"]
-            query = """ 
-            SELECT  "ID" ,
-                "Prenom-Nom" ,
-                "Telephone" ,
-                "Nombre-prs-AR" ,
-                "Provenance" ,
-                "Arrivee-date" ,
-                "Arrivee-vol" ,
-                "Arrivee-heure" ,
-                "Arrivee-Lieux" ,
-                "Hebergeur" ,
-                "RESTAURATION" ,
-                "Telephone-hebergeur" ,
-                "Adresse-hebergement" ,
-                "Retour-date" ,
-                "Nombre-prs-Ret" ,
-                "Retour-vol" ,
-                "Retour-heure" ,
-                "Retour-Lieux" ,
-                "Destination" ,
-                "Chauffeur"  
-                FROM "Hotes" where evenement_annee = 2024
-                and "ID" is not null
-                and "Prenom-Nom" is not null
-                and (
-                        (
-                            "Nombre-prs-AR" is not null
-                            and "Arrivee-date" is not null
-                            and "Arrivee-vol" is not null
-                            and "Arrivee-heure" is not null
-                            and "Arrivee-Lieux" is not null
-                            and "Adresse-hebergement" is not null
-                            ) 
-                            or 
-                            (
-                            "Retour-date" is not null
-                            and "Nombre-prs-Ret" is not null
-                            and "Retour-vol" is not null
-                            and "Retour-heure" is not null
-                            and "Retour-Lieux" is not null
-                            )
-                )
-                LIMIT 7
-                ;
-                """
-            #query = 'SELECT * FROM "Hotes" where evenement_annee = 2024 ;'
-            hotes_data = await self.ds.execute_query(query)
-            
-            # Convertir les données en DataFrame
-            data_df = pd.DataFrame(hotes_data, columns=columns)
-            
-            
-            print("Debut transformation initiale")
-            
-            # Nettoyer les noms de colonnes
-            
-            data_df.columns = data_df.columns.str.strip()
-            
-            # Conversion des colonnes de date et heure
-            data_df['Arrivee-date'] = data_df['Arrivee-date'].astype(str)
-            data_df['Arrivee-heure'] = data_df['Arrivee-heure'].astype(str)
-            data_df['Retour-date'] = data_df['Retour-date'].astype(str)
-            data_df['Retour-heure'] = data_df['Retour-heure'].astype(str)
-            
-            # Formater les heures
-            data_df['Arrivee-heure'] = data_df['Arrivee-heure'].str.replace(['H', 'h'], ':').apply(format_hour)
-            data_df['Retour-heure'] = data_df['Retour-heure'].str.replace(['H', 'h'], ':').apply(format_hour)
-            
-            # Nettoyer les espaces
-            for col in ['Arrivee-date', 'Arrivee-heure', 'Retour-date', 'Retour-heure']:
-                data_df[col] = data_df[col].str.replace(' ', '')
-            
-            # Mapping des adresses
-            LIEUX_MAPPING_ADRESSE_MINUSCULE = {k.lower(): v for k, v in LIEUX_MAPPING_ADRESSE.items()}
-            
-            # Traitement des adresses
-            data_df['Adresse-hebergement'] = data_df['Adresse-hebergement'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
-            data_df['Adresse-hebergement'] = data_df['Adresse-hebergement'].apply(
-                lambda x: f'{x}, {PAYS_ORGANISATEUR}' if isinstance(x, str) and PAYS_ORGANISATEUR not in x else x
-            )
-            
-            # Traitement des lieux
-            data_df['Arrivee-Lieux'] = data_df['Arrivee-Lieux'].str.upper()
-            data_df['Retour-Lieux'] = data_df['Retour-Lieux'].str.upper()
-            
-            # Génération des adresses longues pour le mapping
-            data_df['arrivee_lieux_long'] = data_df['Arrivee-Lieux'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
-            data_df['retour_lieux_long'] = data_df['Retour-Lieux'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
-            
-            print("Fin transformation initiale")
-            print("Debut transformation mapping colonne")
-            
+
+            # Définition des colonnes incluant les champs d'erreur
+            columns = ["ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", 
+                      "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
+                      "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
+                      "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
+                      "Retour-Lieux", "Destination", "vip", "transport_aller", "transport_retour",
+                      "erreur_aller", "erreur_retour"]
+
+            # Requêtes pour les courses aller et retour 
+            query_aller = f"""
+                SELECT "ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", 
+                      "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
+                      "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
+                      "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
+                      "Retour-Lieux", "Destination",  "vip" , "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
+                FROM "Hotes" 
+                WHERE evenement_annee = {passed_year}
+                AND "ID" is not null
+                AND ( "Prenom-Nom" is not null and "Prenom-Nom" != '' and "Prenom-Nom" != 'None' and "Prenom-Nom" != ' ')
+                AND ( "Nombre-prs-AR" is not null and "Nombre-prs-AR" != '' and "Nombre-prs-AR" != 'None' and "Nombre-prs-AR" != ' ')
+                AND ( "Arrivee-date" is not null  and "Arrivee-date" != '' and "Arrivee-date" != 'None' and "Arrivee-date" != ' ')
+                AND ( "Arrivee-heure" is not null and "Arrivee-heure" != '' and "Arrivee-heure" != 'None' and "Arrivee-heure" != ' ')
+                AND ( "Arrivee-Lieux" is not null  and "Arrivee-Lieux" != '' and "Arrivee-Lieux" != 'None' and "Arrivee-Lieux" != ' ')
+                AND ( "Adresse-hebergement" is not null  and "Adresse-hebergement" != '' and "Adresse-hebergement" != 'None' and "Adresse-hebergement" != ' ')
+                AND ( "erreur_aller" is null OR "erreur_aller" = '' );
+            """
+
+            query_retour = f"""
+                SELECT "ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", 
+                      "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
+                      "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
+                      "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
+                      "Retour-Lieux", "Destination",  "vip" , "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
+                FROM "Hotes" 
+                WHERE evenement_annee = {passed_year}
+                AND "ID" is not null
+                AND ( "Prenom-Nom" is not null and "Prenom-Nom" != '' and "Prenom-Nom" != 'None' and "Prenom-Nom" != ' ')
+                AND "Retour-date" is not null and "Retour-date" != '' and "Retour-date" != 'None' and "Retour-date" != ' '         
+                AND "Nombre-prs-Ret" is not null  and "Nombre-prs-Ret" != '' and "Nombre-prs-Ret" != 'None' and "Nombre-prs-Ret" != ' '
+                AND "Retour-heure" is not null and "Retour-heure" != '' and "Retour-heure" != 'None' and "Retour-heure" != ' '
+                AND "Retour-Lieux" is not null and "Retour-Lieux" != '' and "Retour-Lieux" != 'None' and "Retour-Lieux" != ' '
+                AND ("erreur_retour" is null OR "erreur_retour" = '')
+                
+            """
+
+            # Exécution des requêtes
+            hotes_aller = await self.ds.execute_query(query_aller)
+            hotes_retour = await self.ds.execute_query(query_retour)
+
+            # Conversion en DataFrames
+            data_aller_df = pd.DataFrame(hotes_aller, columns=columns)
+            data_retour_df = pd.DataFrame(hotes_retour, columns=columns)
+            data_df = pd.concat([data_aller_df, data_retour_df]).drop_duplicates(subset=['ID'])
+
+            self.logger.info("Début transformation des données")
+            # Nettoyage et préparation des données
+            data_df = self._prepare_dataframe(data_df)
+
             # Génération des courses
             courses = []
-            for index, row in data_df.iterrows():
-                # Course aller (Arrivée -> Hébergement)
-                aller = {
-                    'prenom_nom': row['Prenom-Nom'],
-                    'telephone': row['Telephone'],
+            
+            # Traitement des courses aller
+            courses.extend(self._generate_aller_courses(data_df))
+            
+            # Traitement des courses retour
+            courses.extend(self._generate_retour_courses(data_df))
+            
+            # Traitement des courses vers la salle
+            courses.extend(self._generate_salle_courses(data_aller_df))
+
+            # Convertir en DataFrame
+            courses_df = pd.DataFrame(courses)
+
+            # Insertion dans la base de données
+            await self._insert_courses(courses_df)
+
+            # Sauvegarde dans Google Drive
+            await self._save_to_drive(courses_df)
+
+            self.logger.info("FIN genererCourse")
+            return courses_df
+
+        except Exception as e:
+            self.logger.error(f"Erreur dans genererCourse : {e}")
+            raise
+
+    def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prépare le DataFrame avec les transformations nécessaires"""
+        df.columns = df.columns.str.strip()
+        
+        # Conversion et formatage des dates et heures
+        for col in ['Arrivee-date', 'Retour-date']:
+            df[col] = df[col].astype(str).fillna('')
+            
+        # Formatage des heures
+        for col in ['Arrivee-heure', 'Retour-heure']:
+            df[col] = (df[col].fillna('').astype(str)
+                      .str.replace('h', ':')
+                      .str.split(':')
+                      .apply(lambda x: f"{x[0].zfill(2)}:{x[1].zfill(2)}" if len(x) == 2 else ''))
+        
+        # Traitement des adresses
+        settings = get_settings()
+        PAYS_ORGANISATEUR = settings.PAYS_ORGANISATEUR.lower()
+
+        
+        LIEUX_MAPPING_ADRESSE_MINUSCULE = {k.lower(): v for k, v in LIEUX_MAPPING_ADRESSE.items()}
+        
+        df['Adresse-hebergement'] = df['Adresse-hebergement'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
+        df['Adresse-hebergement'] = df['Adresse-hebergement'].apply(
+            lambda x: f'{x}, {PAYS_ORGANISATEUR}' if isinstance(x, str) and PAYS_ORGANISATEUR not in x else x
+        )
+        
+        # Traitement des lieux
+        for col in ['Arrivee-Lieux', 'Retour-Lieux']:
+            df[col] = df[col].str.upper()
+            df[f"{col.lower()}_long"] = df[col].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
+            
+        return df
+
+    def _generate_base_course(self, row, type_course: str) -> dict:
+        """Génère un dictionnaire de base pour une course"""
+        return {
+            'prenom_nom': row['Prenom-Nom'],
+            'telephone': row['Telephone'],
+            'hebergeur': row.get('Hebergeur', None),
+            'telephone_hebergement': row.get('Telephone-hebergeur', None),
+            'hote_id': row['ID'],
+            'vip': row.get('VIP', False),
+            'type_course': type_course
+        }
+
+    def _generate_aller_courses(self, df: pd.DataFrame) -> list:
+        """Génère les courses aller"""
+        courses = []
+        for _, row in df.iterrows():
+            if pd.notnull(row['Arrivee-date']) and (pd.isnull(row['erreur_aller']) or row['erreur_aller'] == ''):
+                course = self._generate_base_course(row, 'aller')
+                course.update({
                     'nombre_personne': row['Nombre-prs-AR'],
-                    'lieu_prise_en_charge_court': row['Arrivee-Lieux'],  # Valeur originale
-                    'lieu_prise_en_charge': row['arrivee_lieux_long'],  # Valeur mappée
+                    'lieu_prise_en_charge_court': row['Arrivee-Lieux'],
+                    'lieu_prise_en_charge': row['Arrivee-Lieux'], # row['arrivee_lieux_long']
                     'date_heure_prise_en_charge': pd.to_datetime(f"{row['Arrivee-date']} {row['Arrivee-heure']}"),
-                    'num_vol': row.get('Numero-vol', None),
-                    'destination': row['Adresse-hebergement'],
-                    'hebergeur': row.get('Hebergeur', None),
-                    'telephone_hebergement': row.get('Telephone-hebergement', None),
-                    'hote_id': row['ID'],  # Lien vers la table Hotes
-                    'vip': row.get('VIP', False),
-                    'evenement_annee': row['evenement_annee'],
-                    'evenement_jour': row['evenement_jour']
-                }
-                
-                # Course retour (Hébergement -> Retour)
-                retour = {
-                    'prenom_nom': row['Prenom-Nom'],
-                    'telephone': row['Telephone'],
-                    'nombre_personne': row['Nombre-prs-Ret'],
-                    'lieu_prise_en_charge_court': row['Adresse-hebergement'],  # Valeur originale
-                    'lieu_prise_en_charge': row['Adresse-hebergement'],  # Même valeur car c'est l'hébergement
-                    'date_heure_prise_en_charge': pd.to_datetime(f"{row['Retour-date']} {row['Retour-heure']}"),
-                    'num_vol': row.get('Numero-vol-retour', None),
-                    'destination': row['retour_lieux_long'],  # Valeur mappée
-                    'hebergeur': row.get('Hebergeur', None),
-                    'telephone_hebergement': row.get('Telephone-hebergement', None),
-                    'hote_id': row['ID'],  # Lien vers la table Hotes
-                    'vip': row.get('VIP', False),
-                    'evenement_annee': row['evenement_annee'],
-                    'evenement_jour': row['evenement_jour']
-                }
-                
-                # Course vers la salle (si nécessaire)
+                    'num_vol': row.get('Arrivee-vol', None),
+                    'destination': row['Adresse-hebergement']
+                })
+                courses.append(course)
+        return courses
+
+    def _generate_retour_courses(self, df: pd.DataFrame) -> list:
+
+        settings = get_settings()
+        NOMBRE_MINUTES_AVANT_RETOUR = settings.NOMBRE_MINUTES_AVANT_RETOUR
+        JOUR_FIN_EVENEMENT = settings.JOUR_FIN_EVENEMENT
+        ADRESSE_SALLE = settings.ADRESSE_SALLE.lower()
+
+        """Génère les courses retour"""
+        courses = []
+        for _, row in df.iterrows():
+            if pd.notnull(row['Retour-date']) and (pd.isnull(row['erreur_retour']) or row['erreur_retour'] == ''):
+                course = self._generate_base_course(row, 'retour')
+                # Convertir la date de retour en datetime pour comparaison
+                retour_date = pd.to_datetime(row['Retour-date']).strftime('%Y-%m-%d')
+                if retour_date == JOUR_FIN_EVENEMENT:
+                    course.update({
+                        'nombre_personne': row['Nombre-prs-Ret'],
+                        'lieu_prise_en_charge_court': ADRESSE_SALLE,
+                        'lieu_prise_en_charge': ADRESSE_SALLE,
+                        'date_heure_prise_en_charge': pd.to_datetime(f"{row['Retour-date']} {row['Retour-heure']}") - pd.Timedelta(minutes=NOMBRE_MINUTES_AVANT_RETOUR),
+                        'num_vol': row.get('Retour-vol', None),
+                        'destination': row['Retour-Lieux'] # row['retour_lieux_long']
+                    })
+                else:
+                    course.update({
+                        'nombre_personne': row['Nombre-prs-Ret'],
+                        'lieu_prise_en_charge_court': row['Adresse-hebergement'],
+                        'lieu_prise_en_charge': row['Adresse-hebergement'],
+                        'date_heure_prise_en_charge': pd.to_datetime(f"{row['Retour-date']} {row['Retour-heure']}") - pd.Timedelta(minutes=NOMBRE_MINUTES_AVANT_RETOUR),
+                        'num_vol': row.get('Retour-vol', None),
+                        'destination':  row['Retour-Lieux']
+                    })
+                courses.append(course)
+        return courses
+
+    def _generate_salle_courses(self, df: pd.DataFrame) -> list:
+        """Génère les courses vers la salle"""
+        settings = get_settings()
+        JOUR_EVENEMENT = settings.JOUR_EVENEMENT
+        ADRESSE_SALLE = settings.ADRESSE_SALLE.lower()
+        
+        courses = []
+        for _, row in df.iterrows():
+            if pd.notnull(row['Arrivee-date']):
                 arrivee_date = pd.to_datetime(row['Arrivee-date'])
                 jour_evenement = pd.to_datetime(JOUR_EVENEMENT)
                 
-                if not pd.isnull(arrivee_date) and arrivee_date.date() < jour_evenement.date():
-                    vers_salle = {
-                        'prenom_nom': row['Prenom-Nom'],
-                        'telephone': row['Telephone'],
+                if arrivee_date.date() < jour_evenement.date():
+                    course = self._generate_base_course(row, 'vers_salle')
+                    course.update({
                         'nombre_personne': row['Nombre-prs-AR'],
-                        'lieu_prise_en_charge_court': row['Adresse-hebergement'],  # Valeur originale
-                        'lieu_prise_en_charge': row['Adresse-hebergement'],  # Même valeur car c'est l'hébergement
-                        'date_heure_prise_en_charge': pd.to_datetime(f"{JOUR_EVENEMENT} {settings.JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE}:{settings.JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE}"),
-                        'destination': ADRESSE_SALLE,
-                        'hebergeur': row.get('Hebergeur', None),
-                        'telephone_hebergement': row.get('Telephone-hebergement', None),
-                        'hote_id': row['ID'],  # Lien vers la table Hotes
-                        'vip': row.get('VIP', False),
-                        'evenement_annee': row['evenement_annee'],
-                        'evenement_jour': row['evenement_jour']
-                    }
-                    courses.append(vers_salle)
-                
-                courses.extend([aller, retour])
+                        'lieu_prise_en_charge_court': row['Adresse-hebergement'],
+                        'lieu_prise_en_charge': row['Adresse-hebergement'],
+                        'date_heure_prise_en_charge': pd.to_datetime(
+                            f"{JOUR_EVENEMENT} {settings.JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE}:{settings.JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE}"
+                        ),
+                        'destination': ADRESSE_SALLE
+                    })
+                    courses.append(course)
+        return courses
+
+    async def _insert_courses(self, courses_df: pd.DataFrame):
+        """Insère les courses dans la base de données"""
+        for _, row in courses_df.iterrows():
+            insert_query = """
+                INSERT INTO course (
+                    prenom_nom, telephone, nombre_personne,
+                    lieu_prise_en_charge_court, lieu_prise_en_charge,
+                    date_heure_prise_en_charge, num_vol,
+                    destination_court, destination,
+                    hebergeur, telephone_hebergement,
+                    hote_id, vip, type_course
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (hote_id, date_heure_prise_en_charge) 
+                DO UPDATE SET
+                    prenom_nom = EXCLUDED.prenom_nom,
+                    telephone = EXCLUDED.telephone,
+                    nombre_personne = EXCLUDED.nombre_personne,
+                    lieu_prise_en_charge_court = EXCLUDED.lieu_prise_en_charge_court,
+                    lieu_prise_en_charge = EXCLUDED.lieu_prise_en_charge,
+                    num_vol = EXCLUDED.num_vol,
+                    destination_court = EXCLUDED.destination_court,
+                    destination = EXCLUDED.destination,
+                    hebergeur = EXCLUDED.hebergeur,
+                    telephone_hebergement = EXCLUDED.telephone_hebergement,
+                    vip = EXCLUDED.vip,
+                    type_course = EXCLUDED.type_course
+            """
+            params = [
+                row['prenom_nom'], row['telephone'], row['nombre_personne'],
+                row['lieu_prise_en_charge_court'], row['lieu_prise_en_charge'],
+                row['date_heure_prise_en_charge'], row.get('num_vol'),
+                row.get('destination_court', ''), row['destination'],
+                row.get('hebergeur'), row.get('telephone_hebergement'),
+                row['hote_id'], row.get('vip', False),
+                row.get('type_course', '')
+            ]
             
-            # Convertir en DataFrame
-            courses_df = pd.DataFrame(courses)
-            
-            print("Fin transformation mapping colonne")
-            
-            # Mise à jour des coordonnées GPS
-            print("Debut update_address_coordinates")
-            await self.update_address_coordinates(courses_df, ['lieu_prise_en_charge', 'destination'])
-            print("Fin update_address_coordinates")
-            
-            # Mise à jour des distances
-            print("Debut update_distance")
-            dict_address = await self.get_data_dict()
-            await self.update_distance_course(courses_df, dict_address)
-            print("Fin update_distance")
-            
-            # Upsert dans la table course avec execute_transaction
-            for _, row in courses_df.iterrows():
-                insert_query = """
-                    INSERT INTO course (
-                        prenom_nom, telephone, nombre_personne,
-                        lieu_prise_en_charge_court, lieu_prise_en_charge,
-                        date_heure_prise_en_charge, num_vol,
-                        destination_court, destination,
-                        hebergeur, telephone_hebergement,
-                        hote_id, vip, evenement_annee, evenement_jour
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                    )
-                    ON CONFLICT (hote_id, date_heure_prise_en_charge) 
-                    DO UPDATE SET
-                        prenom_nom = EXCLUDED.prenom_nom,
-                        telephone = EXCLUDED.telephone,
-                        nombre_personne = EXCLUDED.nombre_personne,
-                        lieu_prise_en_charge_court = EXCLUDED.lieu_prise_en_charge_court,
-                        lieu_prise_en_charge = EXCLUDED.lieu_prise_en_charge,
-                        num_vol = EXCLUDED.num_vol,
-                        destination_court = EXCLUDED.destination_court,
-                        destination = EXCLUDED.destination,
-                        hebergeur = EXCLUDED.hebergeur,
-                        telephone_hebergement = EXCLUDED.telephone_hebergement,
-                        vip = EXCLUDED.vip,
-                        evenement_annee = EXCLUDED.evenement_annee,
-                        evenement_jour = EXCLUDED.evenement_jour
-                """
-                params = [
-                    row['prenom_nom'], row['telephone'], row['nombre_personne'],
-                    row['lieu_prise_en_charge_court'], row['lieu_prise_en_charge'],
-                    row['date_heure_prise_en_charge'], row.get('num_vol'),
-                    row['destination_court'], row['destination'],
-                    row.get('hebergeur'), row.get('telephone_hebergement'),
-                    row['hote_id'], row.get('vip', False),
-                    row['evenement_annee'], row['evenement_jour']
-                ]
-                
-                await self.ds.execute_transaction([(insert_query, params)])
-            
-            print("FIN genererCourse")
-            return courses_df
-            
-        except Exception as e:
-            logger.error(f"Erreur dans genererCourse : {e}")
-            raise
+            await self.ds.execute_transaction([(insert_query, params)])

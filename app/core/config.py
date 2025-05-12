@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     # la combinaison de JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE et JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE donne l'heure de prise en charge des clients ou invités pour les amener à la salle
     #"2024-05-10 08:30:00" si on a JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE = 8 et JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE = 30
     JOUR_FIN_EVENEMENT : str = "2024-05-11"
-    #NOMBRE_MINUTES_AVANT_RETOUR : int = 180 #  pour calculer  la date_heure_prise_en_charge -180 minutes (3heures) par exemple avanr le depart du vol  
+    NOMBRE_MINUTES_AVANT_RETOUR : int = 180 #  pour calculer  la date_heure_prise_en_charge -180 minutes (3heures) par exemple avanr le depart du vol  
     #DUREE_ENTRE_MISSION_CHAUFFEUR : int   = 130 # delai de latence entre deux missions pour un chauffeur en minutes ou entre 2 prise en charge
     #GROUPE_PRIORITE_VANNE : int  = 12 # Pour les réaffectation SI >= 12 PRILIVIGIER VANNE + PETITE VOITURE . ENTRE 13 ET 16 2 VANNES -> Fixer
     # Override database settings for CI environment

@@ -37,6 +37,9 @@ class Hotes(BaseModel):
     Retour_Lieux: Optional[str] = Field(None, alias="Retour-Lieux")
     Destination: Optional[str] = None
     Chauffeur: Optional[str] = None
+    vip: Optional[str] = Field(None, alias="vip")  # Changé de "VIP" à "vip"
+    transport_aller: Optional[str] = Field(None, alias="Transport_Aller")
+    transport_retour: Optional[str] = Field(None, alias="Transport_retour")
     evenement_annee: Optional[str] = None
     evenement_jour: Optional[str] = None
 
@@ -111,15 +114,28 @@ class HotesSync:
                 'Nombre_prs_Ret': 'Nombre-prs-Ret',
                 'Retour_vol': 'Retour-vol',
                 'Retour_heure': 'Retour-heure',
-                'Retour_Lieux': 'Retour-Lieux'
+                'Retour_Lieux': 'Retour-Lieux',
+                'transport_aller': 'Transport_Aller',
+                'transport_retour': 'Transport_retour'
             }
             
             # Renommer les colonnes
             df = df.rename(columns=column_mapping)
             
+            # Gérer spécifiquement la colonne VIP
+            if 'VIP' in df.columns:
+                df['vip'] = df['VIP']  # Créer une nouvelle colonne 'vip' à partir de 'VIP'
+                df = df.drop('VIP', axis=1)  # Supprimer l'ancienne colonne 'VIP'
+            
             # Convertir les valeurs en chaînes de caractères
             for col in df.columns:
                 df[col] = df[col].astype(str).replace('nan', None)
+            
+            logger.info("Colonnes après traitement:")
+            logger.info(df.columns.tolist())
+            logger.info("Exemples de valeurs VIP:")
+            if 'vip' in df.columns:
+                logger.info(df[['ID', 'vip']].head())
             
             hotes = []
             for _, row in df.iterrows():
@@ -155,21 +171,42 @@ class HotesSync:
             'to_update': [],
             'unchanged': []
         }
+        logger.info("Début de la comparaison des données")
 
         for host in file_hosts:
             host_dict = host.dict(by_alias=True)
             existing = existing_hosts.get(host.ID)
 
             if not existing:
+                logger.info(f"Nouvel hôte à insérer (ID: {host.ID})")
                 changes['to_insert'].append(host_dict)
             else:
                 # Ne pas inclure les champs evenement dans les changements s'ils existent déjà
                 changes_dict = {}
                 for field, value in host_dict.items():
+                    # Ignorer les champs d'événement s'ils existent déjà
                     if field in ['evenement_annee', 'evenement_jour'] and existing.get(field) is not None:
                         continue
-                    if field != 'ID' and existing.get(field) != value:
+                    
+                    # Récupérer la valeur existante
+                    existing_value = existing.get(field)
+                    
+                    # Convertir 'None' (string) en None
+                    if value == 'None':
+                        value = None
+                    if existing_value == 'None':
+                        existing_value = None
+                    
+                    # Comparer les valeurs en tenant compte des None/null
+                    if field != 'ID' and (
+                        (value is None and existing_value is not None) or
+                        (value is not None and existing_value is None) or
+                        (value is not None and existing_value is not None and value != existing_value)
+                    ):
                         changes_dict[field] = value
+                        logger.info(f"Différence détectée pour l'hôte {host.ID}, champ {field}:")
+                        logger.info(f"  - Valeur dans le fichier: {value}")
+                        logger.info(f"  - Valeur existante: {existing_value}")
 
                 if changes_dict:
                     changes['to_update'].append({
@@ -209,8 +246,13 @@ class HotesSync:
                 if update['changes'].get('evenement_jour') is None:
                     update['changes']['evenement_jour'] = evenement_jour
                 
-                self.supabase.table(self.TABLE_NAME).update(update['changes']).eq('ID', update['id']).execute()
-                logger.info(f"Mise à jour de l'hôte ID {update['id']}")
+                # Traiter les valeurs None dans les changements
+                changes_to_apply = {}
+                for field, value in update['changes'].items():
+                    changes_to_apply[field] = None if value in [None, 'None'] else value
+                
+                self.supabase.table(self.TABLE_NAME).update(changes_to_apply).eq('ID', update['id']).execute()
+                logger.info(f"Mise à jour de l'hôte ID {update['id']} avec les changements: {changes_to_apply}")
 
             return {'success': True, 'message': 'Changements appliqués avec succès'}
         except Exception as e:
