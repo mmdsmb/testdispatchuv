@@ -1,3 +1,23 @@
+1. Initialize Git repository:
+```bash
+git init
+```
+
+2. Add files and commit:
+```bash
+git add .
+git commit -m "Initial commit"
+```
+
+3. Add remote and push:
+```bash
+git config --global user.name "mmdsmb"
+git config --global user.email "mmdsmb@gmail.com"
+git remote add origin https://github.com/mmdsmb/testdispatchuv.git
+git remote set-url origin git@github.com:mmdsmb/testdispatchuv.git
+git push -u origin main
+```
+
 Différence entre `git pull` et `git fetch`, et quand utiliser chacun :
 
 ---
