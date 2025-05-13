@@ -114,3 +114,85 @@ perdre toutes vos modifications locales et revenir à l'état du dernier commit,
 git reset --hard HEAD
 
 ```
+
+### **Solution Recommandée (sauvegarder vos modifications)**
+1. **Stash (mise de côté temporaire)** :
+   ```bash
+   git stash save "Modifications locales avant pull"
+   ```
+
+2. **Effectuer le pull** :
+   ```bash
+   git pull origin main
+   ```
+
+3. **Récupérer vos modifications** :
+   ```bash
+   git stash pop  # Applique les modifications et supprime le stash
+   ```
+
+### **Si vous voulez annuler définitivement les modifications locales** (⚠️ irréversible) :
+```bash
+# 1. Annuler les modifications non commitées
+git reset --hard HEAD
+
+# 2. Annuler les fichiers stagés (si besoin)
+git clean -fd
+
+# 3. Pull
+git pull origin main
+```
+
+### **Explications** :
+- **`git stash`** :  
+  Sauvegarde vos modifications dans une pile temporaire, vous permettant de les réappliquer après le pull.
+
+- **`git reset --hard HEAD`** :  
+  Réinitialise votre répertoire de travail à l'état du dernier commit (supprime toutes les modifications non commitées).
+
+- **Pourquoi cette erreur ?**  
+  Git refuse de fusionner (`pull` = `fetch` + `merge`) tant que vous avez des modifications non commitées qui pourraient être écrasées.
+
+### **Workflow Complet (avec stash)** :
+```bash
+# 1. Vérifier l'état actuel
+git status
+
+# 2. Stash les modifications
+git stash
+
+# 3. Pull
+git pull origin main
+
+# 4. Récupérer le stash
+git stash pop
+
+# 5. Résoudre les conflits si nécessaire (ouvrir le fichier concerné)
+```
+
+### **Si vous avez des conflits après `stash pop`** :
+1. Ouvrez le fichier conflictuel (comme `app/_main.ipynb`)  
+2. Cherchez les marqueurs `<<<<<<<`, `=======`, `>>>>>>>`  
+3. Corrigez manuellement, puis :  
+   ```bash
+   git add app/_main.ipynb
+   git stash drop  # Supprime le stash appliqué
+   ```
+
+**Note** : Si vous utilisez Jupyter Notebook (`.ipynb`), les conflits peuvent être complexes à résoudre manuellement. Dans ce cas, envisagez de :
+- Conserver une copie de sauvegarde du fichier avant toute opération  
+- Utiliser `nbdiff` ou `jupyter-lab` pour les merges visuels
+
+
+Si vous avez des modifications locales non sauvegardées dans le fichier `app/_main.ipynb`, vous pouvez suivre ces étapes :
+
+1. Annulez les modifications locales :
+   ```bash
+   git checkout -- app/_main.ipynb
+   ```
+
+2. Récupérez les changements distants et intégrez-les :
+   ```bash
+   git pull
+   ```
+

@@ -6,7 +6,8 @@ import logging
 from app.core.config import settings , get_settings , LIEUX_MAPPING_ADRESSE
 import httpx
 import pandas as pd
-from app.core.utils import format_heure
+from app.core.utils import format_heure, save_and_upload_to_drive
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -252,13 +253,15 @@ class CourseProcessor:
                       "Retour-Lieux", "Destination", "vip", "transport_aller", "transport_retour",
                       "erreur_aller", "erreur_retour"]
 
-            # Requêtes pour les courses aller et retour 
+            # Requêtes pour les courses aller - nombre de personnes en int retour a zero car pas besoin pour crer les courses aller
             query_aller = f"""
-                SELECT "ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", 
+                SELECT "ID", "Prenom-Nom", "Telephone", cast(cast("Nombre-prs-AR" as float) as int) as "Nombre-prs-AR", "Provenance", 
                       "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
                       "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
-                      "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
-                      "Retour-Lieux", "Destination",  "vip" , "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
+                      "Retour-date", 0 as "Nombre-prs-Ret", "Retour-vol",  "Retour-heure",
+                      "Retour-Lieux", "Destination",   "vip" ,
+                      "transport_aller", "transport_retour" ,
+                      "erreur_aller" , "erreur_retour"
                 FROM "Hotes" 
                 WHERE evenement_annee = {passed_year}
                 AND "ID" is not null
@@ -266,16 +269,18 @@ class CourseProcessor:
                 AND ( "Nombre-prs-AR" is not null and "Nombre-prs-AR" != '' and "Nombre-prs-AR" != 'None' and "Nombre-prs-AR" != ' ')
                 AND ( "Arrivee-date" is not null  and "Arrivee-date" != '' and "Arrivee-date" != 'None' and "Arrivee-date" != ' ')
                 AND ( "Arrivee-heure" is not null and "Arrivee-heure" != '' and "Arrivee-heure" != 'None' and "Arrivee-heure" != ' ')
-                AND ( "Arrivee-Lieux" is not null  and "Arrivee-Lieux" != '' and "Arrivee-Lieux" != 'None' and "Arrivee-Lieux" != ' ')
-                AND ( "Adresse-hebergement" is not null  and "Adresse-hebergement" != '' and "Adresse-hebergement" != 'None' and "Adresse-hebergement" != ' ')
-                AND ( "erreur_aller" is null OR "erreur_aller" = '' );
+                AND ( "Arrivee-Lieux" is not null  and "Arrivee-Lieux" != '' and "Arrivee-Lieux" != 'None' and "Arrivee-Lieux" != ' ' and lower("Arrivee-Lieux") != 'none')
+                AND ( "Adresse-hebergement" is not null  and "Adresse-hebergement" != '' and "Adresse-hebergement" != 'None' and "Adresse-hebergement" != ' ' and lower("Adresse-hebergement") != 'none')
+                AND ( "erreur_aller" is null OR "erreur_aller" = '' )
+                
+                AND lower(coalesce(transport_aller ,'oui' )) != 'non' ;
             """
-
+            # Requêtes pour les courses retour 
             query_retour = f"""
-                SELECT "ID", "Prenom-Nom", "Telephone", "Nombre-prs-AR", "Provenance", 
+                SELECT "ID", "Prenom-Nom", "Telephone", 0 as "Nombre-prs-AR", "Provenance", 
                       "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
                       "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
-                      "Retour-date", "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
+                      "Retour-date", cast(cast("Nombre-prs-Ret" as float) as int) as "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
                       "Retour-Lieux", "Destination",  "vip" , "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
                 FROM "Hotes" 
                 WHERE evenement_annee = {passed_year}
@@ -284,9 +289,10 @@ class CourseProcessor:
                 AND "Retour-date" is not null and "Retour-date" != '' and "Retour-date" != 'None' and "Retour-date" != ' '         
                 AND "Nombre-prs-Ret" is not null  and "Nombre-prs-Ret" != '' and "Nombre-prs-Ret" != 'None' and "Nombre-prs-Ret" != ' '
                 AND "Retour-heure" is not null and "Retour-heure" != '' and "Retour-heure" != 'None' and "Retour-heure" != ' '
-                AND "Retour-Lieux" is not null and "Retour-Lieux" != '' and "Retour-Lieux" != 'None' and "Retour-Lieux" != ' '
+                AND "Retour-Lieux" is not null and "Retour-Lieux" != '' and "Retour-Lieux" != 'None' and "Retour-Lieux" != ' ' and lower("Retour-Lieux") != 'none'
+                AND "Adresse-hebergement" is not null and "Adresse-hebergement" != '' and "Adresse-hebergement" != 'None' and "Adresse-hebergement" != ' ' and lower("Adresse-hebergement") != 'none'
                 AND ("erreur_retour" is null OR "erreur_retour" = '')
-                
+                AND lower(coalesce(transport_retour ,'oui' )) != 'non' ;
             """
 
             # Exécution des requêtes
@@ -296,20 +302,24 @@ class CourseProcessor:
             # Conversion en DataFrames
             data_aller_df = pd.DataFrame(hotes_aller, columns=columns)
             data_retour_df = pd.DataFrame(hotes_retour, columns=columns)
-            data_df = pd.concat([data_aller_df, data_retour_df]).drop_duplicates(subset=['ID'])
+            #data_df = pd.concat([data_aller_df, data_retour_df]).drop_duplicates(subset=['ID'])
 
             self.logger.info("Début transformation des données")
             # Nettoyage et préparation des données
-            data_df = self._prepare_dataframe(data_df)
+            #data_df = self._prepare_dataframe(data_df)
+            data_aller_df = self._prepare_dataframe(data_aller_df)
+            data_retour_df = self._prepare_dataframe(data_retour_df)
+
+
 
             # Génération des courses
             courses = []
             
             # Traitement des courses aller
-            courses.extend(self._generate_aller_courses(data_df))
+            courses.extend(self._generate_aller_courses(data_aller_df))
             
             # Traitement des courses retour
-            courses.extend(self._generate_retour_courses(data_df))
+            courses.extend(self._generate_retour_courses(data_retour_df))
             
             # Traitement des courses vers la salle
             courses.extend(self._generate_salle_courses(data_aller_df))
@@ -319,9 +329,21 @@ class CourseProcessor:
 
             # Insertion dans la base de données
             await self._insert_courses(courses_df)
+            
+            FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+            if not FOLDER_ID:
+                logger.error("GOOGLE_DRIVE_FOLDER_ID non trouvé dans le fichier .env")
+                raise ValueError("GOOGLE_DRIVE_FOLDER_ID non trouvé dans le fichier .env")
 
             # Sauvegarde dans Google Drive
-            await self._save_to_drive(courses_df)
+            await save_and_upload_to_drive(
+                df=courses_df,
+                folder_id=FOLDER_ID,
+                file_prefix="courses",
+                subfolder_name="courses",
+                format_excel=True,
+                index=False
+            )
 
             self.logger.info("FIN genererCourse")
             return courses_df
@@ -338,31 +360,76 @@ class CourseProcessor:
         for col in ['Arrivee-date', 'Retour-date']:
             df[col] = df[col].astype(str).fillna('')
             
-        # Formatage des heures
+        # Formatage des heures avec une regex plus robuste
         for col in ['Arrivee-heure', 'Retour-heure']:
-            df[col] = (df[col].fillna('').astype(str)
-                      .str.replace('h', ':')
-                      .str.split(':')
-                      .apply(lambda x: f"{x[0].zfill(2)}:{x[1].zfill(2)}" if len(x) == 2 else ''))
+            df[col] = df[col].fillna('').astype(str).apply(self._format_time)
         
         # Traitement des adresses
         settings = get_settings()
         PAYS_ORGANISATEUR = settings.PAYS_ORGANISATEUR.lower()
-
         
         LIEUX_MAPPING_ADRESSE_MINUSCULE = {k.lower(): v for k, v in LIEUX_MAPPING_ADRESSE.items()}
         
-        df['Adresse-hebergement'] = df['Adresse-hebergement'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
-        df['Adresse-hebergement'] = df['Adresse-hebergement'].apply(
-            lambda x: f'{x}, {PAYS_ORGANISATEUR}' if isinstance(x, str) and PAYS_ORGANISATEUR not in x else x
-        )
-        
         # Traitement des lieux
         for col in ['Arrivee-Lieux', 'Retour-Lieux']:
+            # Nettoyage des valeurs None et vides
+            df[col] = df[col].replace(['None', 'none', 'NONE', ''], pd.NA)
+            # Conversion en majuscules uniquement pour les valeurs non-NA
             df[col] = df[col].str.upper()
+            # Création de la colonne _long avec mapping
+            print(f"{col.lower()}_long")
             df[f"{col.lower()}_long"] = df[col].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
+        
+        # Traitement de l'adresse d'hébergement
+        df['Adresse-hebergement'] = df['Adresse-hebergement'].replace(['None', 'none', 'NONE', ''], pd.NA)
+        df['Adresse-hebergement'] = df['Adresse-hebergement'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
+        df['Adresse-hebergement'] = df['Adresse-hebergement'].apply(
+            lambda x: f'{x}, {PAYS_ORGANISATEUR}' if pd.notna(x) and isinstance(x, str) and PAYS_ORGANISATEUR not in x else x
+        )
+
+        # Traitement des destinations pour les courses retour
+        df['Retour-Lieux'] = df['Retour-Lieux'].replace(['None', 'none', 'NONE', ''], pd.NA)
+        df['Retour-Lieux'] = df['Retour-Lieux'].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
+        df['Retour-Lieux'] = df['Retour-Lieux'].apply(
+            lambda x: f'{x}, {PAYS_ORGANISATEUR}' if pd.notna(x) and isinstance(x, str) and PAYS_ORGANISATEUR not in x else x
+        )
             
         return df
+
+    def _format_time(self, time_str: str) -> str:
+        """Formate une chaîne de temps en format HH:MM standard"""
+        import re
+        
+        # Nettoyage initial
+        time_str = str(time_str).strip()
+        if not time_str or time_str.lower() in ['nan', 'none', '']:
+            return ''
+            
+        # Gestion spéciale pour le format "23h"
+        if re.match(r'^\d{1,2}[hH]$', time_str):
+            hours = int(time_str[:-1])
+            if 0 <= hours <= 23:
+                return f"{hours:02d}:00"
+        
+        # Normalisation des séparateurs
+        time_str = time_str.replace(':-', ':').replace('h', ':').replace('H', ':')
+        
+        # Regex pour extraire les heures et minutes
+        pattern = r'^(\d{1,2})(?::(\d{2})|h(\d{2})|H(\d{2})|)$'
+        match = re.match(pattern, time_str)
+        
+        if match:
+            hours = match.group(1)
+            minutes = next((m for m in match.groups()[1:] if m is not None), '00')
+            
+            # Validation des valeurs
+            hours = int(hours)
+            minutes = int(minutes)
+            
+            if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                return f"{hours:02d}:{minutes:02d}"
+        
+        return ''
 
     def _generate_base_course(self, row, type_course: str) -> dict:
         """Génère un dictionnaire de base pour une course"""
@@ -385,16 +452,16 @@ class CourseProcessor:
                 course.update({
                     'nombre_personne': row['Nombre-prs-AR'],
                     'lieu_prise_en_charge_court': row['Arrivee-Lieux'],
-                    'lieu_prise_en_charge': row['Arrivee-Lieux'], # row['arrivee_lieux_long']
+                    'lieu_prise_en_charge': row['arrivee-lieux_long'] if pd.notna(row['arrivee-lieux_long']) else row['Arrivee-Lieux'],
                     'date_heure_prise_en_charge': pd.to_datetime(f"{row['Arrivee-date']} {row['Arrivee-heure']}"),
                     'num_vol': row.get('Arrivee-vol', None),
-                    'destination': row['Adresse-hebergement']
+                    'destination_court': row['Adresse-hebergement'],
+                    'destination': row['Adresse-hebergement'] # faux a verifier et mofif avant integrationrow['arrivee-lieux_long'] if pd.notna(row['arrivee-lieux_long']) else row['Arrivee-Lieux']
                 })
                 courses.append(course)
         return courses
 
     def _generate_retour_courses(self, df: pd.DataFrame) -> list:
-
         settings = get_settings()
         NOMBRE_MINUTES_AVANT_RETOUR = settings.NOMBRE_MINUTES_AVANT_RETOUR
         JOUR_FIN_EVENEMENT = settings.JOUR_FIN_EVENEMENT
@@ -414,7 +481,8 @@ class CourseProcessor:
                         'lieu_prise_en_charge': ADRESSE_SALLE,
                         'date_heure_prise_en_charge': pd.to_datetime(f"{row['Retour-date']} {row['Retour-heure']}") - pd.Timedelta(minutes=NOMBRE_MINUTES_AVANT_RETOUR),
                         'num_vol': row.get('Retour-vol', None),
-                        'destination': row['Retour-Lieux'] # row['retour_lieux_long']
+                        'destination_court': row['Retour-Lieux'],
+                        'destination': row['retour-lieux_long'] if pd.notna(row['retour-lieux_long']) else row['Retour-Lieux']
                     })
                 else:
                     course.update({
@@ -423,7 +491,8 @@ class CourseProcessor:
                         'lieu_prise_en_charge': row['Adresse-hebergement'],
                         'date_heure_prise_en_charge': pd.to_datetime(f"{row['Retour-date']} {row['Retour-heure']}") - pd.Timedelta(minutes=NOMBRE_MINUTES_AVANT_RETOUR),
                         'num_vol': row.get('Retour-vol', None),
-                        'destination':  row['Retour-Lieux']
+                        'destination_court': row['Retour-Lieux'],
+                        'destination': row['retour-lieux_long'] if pd.notna(row['retour-lieux_long']) else row['Retour-Lieux']
                     })
                 courses.append(course)
         return courses
@@ -456,7 +525,14 @@ class CourseProcessor:
 
     async def _insert_courses(self, courses_df: pd.DataFrame):
         """Insère les courses dans la base de données"""
-        for _, row in courses_df.iterrows():
+        for index, row in courses_df.iterrows():
+            # Debug: Afficher les valeurs avant l'insertion
+            print(f"\nTentative d'insertion pour l'index {index}:")
+            print(f"prenom_nom: {row['prenom_nom']}")
+            print(f"nombre_personne: {row['nombre_personne']} (type: {type(row['nombre_personne'])})")
+            print(f"lieu_prise_en_charge: {row['lieu_prise_en_charge']}")
+            print(f"destination: {row['destination']}")
+            
             insert_query = """
                 INSERT INTO course (
                     prenom_nom, telephone, nombre_personne,
@@ -493,4 +569,21 @@ class CourseProcessor:
                 row.get('type_course', '')
             ]
             
-            await self.ds.execute_transaction([(insert_query, params)])
+            try:
+                await self.ds.execute_transaction([(insert_query, params)])
+            except Exception as e:
+                print(f"\nERREUR lors de l'insertion pour l'index {index}:")
+                print(f"Erreur: {str(e)}")
+                print("Valeurs problématiques:")
+                for i, param in enumerate(params):
+                    print(f"Paramètre {i}: {param} (type: {type(param)})")
+                raise
+
+    def clean_time(self, time_str):
+        """Nettoie les formats de temps comme '10:-40' ou '10h40'"""
+        return (
+            str(time_str)
+            .replace(':-', ':')
+            .replace('h', ':')
+            .replace('H', ':')
+        )
