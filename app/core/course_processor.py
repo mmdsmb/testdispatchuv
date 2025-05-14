@@ -259,7 +259,8 @@ class CourseProcessor:
                       "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
                       "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
                       "Retour-date", 0 as "Nombre-prs-Ret", "Retour-vol",  "Retour-heure",
-                      "Retour-Lieux", "Destination",   "vip" ,
+                      "Retour-Lieux", "Destination",  
+                       CASE WHEN LOWER( "vip") = 'oui' THEN true ELSE false END as "vip",
                       "transport_aller", "transport_retour" ,
                       "erreur_aller" , "erreur_retour"
                 FROM "Hotes" 
@@ -281,7 +282,10 @@ class CourseProcessor:
                       "Arrivee-date", "Arrivee-vol", "Arrivee-heure", "Arrivee-Lieux",
                       "Hebergeur", "RESTAURATION", "Telephone-hebergeur", "Adresse-hebergement",
                       "Retour-date", cast(cast("Nombre-prs-Ret" as float) as int) as "Nombre-prs-Ret", "Retour-vol", "Retour-heure",
-                      "Retour-Lieux", "Destination",  "vip" , "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
+                      "Retour-Lieux", "Destination", 
+                       CASE WHEN LOWER( "vip") = 'oui' THEN true ELSE false END as "vip",
+
+                        "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
                 FROM "Hotes" 
                 WHERE evenement_annee = {passed_year}
                 AND "ID" is not null
@@ -439,7 +443,7 @@ class CourseProcessor:
             'hebergeur': row.get('Hebergeur', None),
             'telephone_hebergement': row.get('Telephone-hebergeur', None),
             'hote_id': row['ID'],
-            'vip': row.get('VIP', False),
+            'vip': row.get('vip', False),
             'type_course': type_course
         }
 
@@ -532,6 +536,7 @@ class CourseProcessor:
             # print(f"nombre_personne: {row['nombre_personne']} (type: {type(row['nombre_personne'])})")
             # print(f"lieu_prise_en_charge: {row['lieu_prise_en_charge']}")
             # print(f"destination: {row['destination']}")
+            #print(f"vip: {row['vip']}")
             
             insert_query = """
                 INSERT INTO course (
