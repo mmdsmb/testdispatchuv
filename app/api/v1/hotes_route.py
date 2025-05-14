@@ -1,6 +1,6 @@
 # Exemple d'utilisation dans un endpoint FastAPI
 from fastapi import APIRouter, HTTPException
-from app.models.hotes import HotesSync
+from app.models.hotes_old import HotesSync
 
 router = APIRouter()
 

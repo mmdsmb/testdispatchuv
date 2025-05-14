@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_CREDENTIALS_PATH: str = os.getenv("GOOGLE_DRIVE_CREDENTIALS_PATH", "credentials/dispatchingchauffeur-481e58d1e194.json")
     GOOGLE_CREDENTIALS_BASE64: str = os.getenv("GOOGLE_CREDENTIALS_BASE64", "")
     
+    HOTES_LOCAL_FILENAME: str = "BD_MX-25.xlsx"
         
     DUREE_GROUPE : int = 60  # coefficient d'ajustement ou Durée d'un groupe en minutes
     DESTINATION_DANS_GROUPAGE : str = "oui"  # oui/non ajouter Destination dans le groupage

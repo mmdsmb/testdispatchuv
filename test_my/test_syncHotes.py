@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from app.models.hotes import HotesSync
+from app.models.hotes_old import HotesSync
 from app.core.config import get_settings
 import asyncio
 
