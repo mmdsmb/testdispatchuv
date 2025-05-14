@@ -377,7 +377,7 @@ class CourseProcessor:
             # Conversion en majuscules uniquement pour les valeurs non-NA
             df[col] = df[col].str.upper()
             # Création de la colonne _long avec mapping
-            print(f"{col.lower()}_long")
+            #print(f"{col.lower()}_long")
             df[f"{col.lower()}_long"] = df[col].str.lower().replace(LIEUX_MAPPING_ADRESSE_MINUSCULE)
         
         # Traitement de l'adresse d'hébergement
@@ -456,7 +456,7 @@ class CourseProcessor:
                     'date_heure_prise_en_charge': pd.to_datetime(f"{row['Arrivee-date']} {row['Arrivee-heure']}"),
                     'num_vol': row.get('Arrivee-vol', None),
                     'destination_court': row['Adresse-hebergement'],
-                    'destination': row['Adresse-hebergement'] # faux a verifier et mofif avant integrationrow['arrivee-lieux_long'] if pd.notna(row['arrivee-lieux_long']) else row['Arrivee-Lieux']
+                    'destination': row['Adresse-hebergement'] # faux a row['arrivee-lieux_long'] if pd.notna(row['arrivee-lieux_long']) else row['Arrivee-Lieux']
                 })
                 courses.append(course)
         return courses
@@ -527,11 +527,11 @@ class CourseProcessor:
         """Insère les courses dans la base de données"""
         for index, row in courses_df.iterrows():
             # Debug: Afficher les valeurs avant l'insertion
-            print(f"\nTentative d'insertion pour l'index {index}:")
-            print(f"prenom_nom: {row['prenom_nom']}")
-            print(f"nombre_personne: {row['nombre_personne']} (type: {type(row['nombre_personne'])})")
-            print(f"lieu_prise_en_charge: {row['lieu_prise_en_charge']}")
-            print(f"destination: {row['destination']}")
+            # print(f"\nTentative d'insertion pour l'index {index}:")
+            # print(f"prenom_nom: {row['prenom_nom']}")
+            # print(f"nombre_personne: {row['nombre_personne']} (type: {type(row['nombre_personne'])})")
+            # print(f"lieu_prise_en_charge: {row['lieu_prise_en_charge']}")
+            # print(f"destination: {row['destination']}")
             
             insert_query = """
                 INSERT INTO course (
