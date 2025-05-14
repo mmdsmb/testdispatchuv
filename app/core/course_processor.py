@@ -25,6 +25,11 @@ class CourseProcessor:
     def __init__(self, ds):
         self.ds = ds
         self.logger = logging.getLogger(__name__)
+        # Récupération de la clé API depuis les paramètres
+        settings = get_settings()
+        self.api_key = settings.GOOGLE_MAPS_API_KEY
+        if not self.api_key:
+            raise ValueError("GOOGLE_MAPS_API_KEY non défini dans les paramètres")
 
     def _generate_hash(self, text: str) -> str:
         """Génère un hash MD5 d'une chaîne de caractères"""
@@ -592,3 +597,29 @@ class CourseProcessor:
             .replace('h', ':')
             .replace('H', ':')
         )
+
+    async def update_course_calcul(self) -> None:
+        """Met à jour les calculs des courses manquantes ou incomplètes"""
+        try:
+            # Récupérer les courses qui nécessitent une mise à jour
+            courses = await self.ds.fetch_all("""
+                SELECT c.course_id
+                FROM course c
+                LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
+                WHERE cc.duree_trajet_min IS NULL 
+                OR cc.points_passage_coords IS NULL 
+                OR c.hash_route IS NULL 
+                OR c.hash_route = ''
+            """)
+            
+            for course in courses:
+                try:
+                    await self.process_course(course['course_id'])
+                    self.logger.info(f"Course {course['course_id']} traitée")
+                except Exception as e:
+                    self.logger.error(f"Erreur course {course['course_id']}: {str(e)}")
+                    continue
+                
+        except Exception as e:
+            self.logger.error(f"Erreur dans update_course_calcul: {str(e)}")
+            raise
