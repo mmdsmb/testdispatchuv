@@ -26,7 +26,9 @@ dependencies = [
     "google-auth-oauthlib>=1.0.0",
     "google-auth-httplib2>=0.1.0",
     "openpyxl>=3.1.2",  # Nécessaire pour pd.read_excel()
-    "email-validator>=1.3.1"
+    "email-validator>=1.3.1",
+    "scikit-learn>=1.3.0",  # Pour DBSCAN
+    "numpy>=1.24.0"        # Pour les calculs numériques
 ]
 
 [project.optional-dependencies]
