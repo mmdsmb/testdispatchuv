@@ -28,87 +28,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# # =============================================================================
-# # Résolution initiale par MILP avec time_limit de 5 minutes (300s)
-# # =============================================================================
-
-# milp_time_limit = 300  # 5 minutes
-# prob, result_status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-# milp_solution_optimal = (pulp.LpStatus[result_status] == "Optimal")
-# print("Statut MILP initial :", pulp.LpStatus[result_status])
-# print("Valeur fonction objectif MILP initiale :", pulp.value(prob.objective))
-
-# milp_assignments = extract_assignments(groupes, chauffeurs, x, y)
-
-# # Si la solution MILP n'est pas optimale, lancer le recuit simulé
-# if not milp_solution_optimal:
-#     print("La solution MILP n'est pas optimale après 5 minutes. Lancement du recuit simulé...")
-#     recuit_assignments = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost)
-# else:
-#     recuit_assignments = milp_assignments
-
-# non_couverts = groupes_non_couverts(recuit_assignments, groupes)
-
-# if non_couverts:
-#     print("Certains groupes ne sont pas couverts. Traitement spécifique des groupes non couverts...")
-#     # Première tentative via MILP uniquement pour les groupes non couverts
-#     prob_nc, result_status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-#     nc_milp_optimal = (pulp.LpStatus[result_status_nc] == "Optimal")
-#     nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
-#     # Pour les groupes non couverts par le MILP, appliquer le recuit simulé
-#     if not nc_milp_optimal:
-#         print("La solution MILP pour les groupes non couverts n'est pas optimale. Lancement du recuit simulé pour ces groupes...")
-#         nc_assignments = heuristic_solution(non_couverts, chauffeurs, solo_cost, combo_cost)
-#     # Fusionner les affectations
-#     for g in non_couverts:
-#         recuit_assignments.setdefault(g['id'], [])
-#         if g['id'] in nc_assignments:
-#             recuit_assignments[g['id']].extend(nc_assignments[g['id']])
-# else:
-#     print("Tous les groupes sont couverts.")
-
-# rows = []
-# for g in groupes:
-#     row = {
-#         "group_id": g['id'],
-#         "N": g['ng'],
-#         "pickup_date": g['pickup_date'],
-#         "pickup_time": g['t'],
-#         "duree_trajet_min": g['duree_trajet_min'],
-#         "lieu_prise_en_charge": g.get("pickup_address", ""),
-#         "destination": g.get("dropoff_address", "")
-#     }
-#     aff_list = recuit_assignments.get(g['id'], [])
-
-#     for i in range(20):  # Support pour jusqu'à 20 chauffeurs
-#         if i < len(aff_list):
-#             a = aff_list[i]
-#             ch = next((ch for ch in chauffeurs if ch['id'] == a["chauffeur"]), {})
-#             row[f"chauffeur_{i+1}_id"] = ch.get('id', '')
-#             row[f"chauffeur_{i+1}_nom_prenom"] = ch.get('prenom_nom', '')
-#             row[f"chauffeur_{i+1}_trajet"] = a["trajet"]
-#             row[f"chauffeur_{i+1}_n"] = ch.get('n', '')
-#             # Ajouter les nouvelles informations de combinaison
-#             row[f"chauffeur_{i+1}_combo_id"] = a.get("combo_id", '')
-#             row[f"chauffeur_{i+1}_combiné_avec"] = ','.join(map(str, a.get("combiné_avec", [])))
-#         else:
-#             row[f"chauffeur_{i+1}_id"] = ''
-#             row[f"chauffeur_{i+1}_nom_prenom"] = ''
-#             row[f"chauffeur_{i+1}_trajet"] = ''
-#             row[f"chauffeur_{i+1}_n"] = ''
-#             row[f"chauffeur_{i+1}_combo_id"] = ''
-#             row[f"chauffeur_{i+1}_combiné_avec"] = ''
-
-#     rows.append(row)
-
-# df_output = pd.DataFrame(rows)
-# output_csv = "affectations_groupes_chauffeurs_final.csv"
-# df_output.to_csv(output_csv, index=False)
-# print(f"Le fichier CSV '{output_csv}' a été généré avec les noms des chauffeurs, lieu de prise en charge et destination.")
-# print(df_output)
-
-
-
 # =============================================================================
 # Fonctions auxiliaires
 # =============================================================================
@@ -193,24 +112,6 @@ def combined_route_cost(chauffeur, g1, g2):
 
 async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
     """Récupère les courses avec calcul des distances en Python (sans SQL geodesic)"""
-    # query = """
-    #     SELECT 
-    #         c.course_id as id,
-    #         c.nombre_personne as ng,
-    #         c.lieu_prise_en_charge as pickup_address,
-    #         c.destination as dropoff_address,
-    #         ag_pickup.latitude as lat_pickup,
-    #         ag_pickup.longitude as long_pickup,
-    #         ag_dest.latitude as dest_lat,
-    #         ag_dest.longitude as dest_lng,
-    #         c.date_heure_prise_en_charge,
-    #         EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
-    #         cc.duree_trajet_min
-    #     FROM course c
-    #     JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
-    #     JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
-    #     LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-    # """
     query = """
         SELECT 
             c.groupe_id as id,
@@ -242,7 +143,8 @@ async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = N
     } if date_begin or date_end else {})
     
     if not rows:
-        raise ValueError("Aucune course valide après vérification des coordonnées")
+        logger.info("Aucune course valide après vérification des coordonnées (prepare_demandes)")
+        return []
     
     # Conversion en list[dict] et calcul des durées manquantes
     demandes = []
@@ -422,24 +324,6 @@ def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing=None
         raise
 
 
-# def extract_assignments(groupes, chauffeurs, x, y):
-    
-#     logger.info("Extracting group-driver assignments")
-
-#     assign={}
-#     for g in groupes:
-#         for c in chauffeurs:
-#             if (g['id'],c['id']) in x and pulp.value(x[(g['id'],c['id'])])>0.5:
-#                 assign.setdefault(g['id'],[]).append({"chauffeur":c['id'],"trajet":"simple"})
-#     for (g1,g2,c),v in y.items():
-#         if pulp.value(v)>0.5:
-#             assign.setdefault(g1,[]).append({"chauffeur":c,"trajet":"combiné"})
-#             assign.setdefault(g2,[]).append({"chauffeur":c,"trajet":"combiné"})
-    
-#     logger.info(f" assignments found: {assign}")
-
-#     return assign
-
 def extract_assignments(groupes, chauffeurs, x, y):
     logger.info("Extracting group-driver assignments")
     assignments = {}
@@ -534,9 +418,15 @@ async def solve_dispatch_problem(
         # 1. Récupération des données
         logger.info("Étape 1/4: Récupération des données...")
         groupes = await prepare_demandes(ds, date_begin, date_end)
+        if not groupes:
+            logger.info("Aucun groupe de courses valide à dispatcher. Dispatch non lancé.")
+            return {}
         logger.info(f"→ {len(groupes)} groupes à traiter récupérés")
         
         chauffeurs = await prepare_chauffeurs(ds, date_begin, date_end)
+        if not chauffeurs:
+            logger.info("Aucun chauffeur disponible pour la période spécifiée. Dispatch non lancé.")
+            return {}
         logger.info(f"→ {len(chauffeurs)} chauffeurs disponibles récupérés")
 
         # 2. Calcul des coûts
@@ -810,15 +700,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                 
             hash_addr = generate_address_hash(full_address)
             
-            await ds.execute_transaction([(
-                """
+            await ds.execute_transaction([
+                ("""
                 INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (hash_address) DO UPDATE
                 SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                 """,
-                (hash_addr, full_address, lat, lng)
-            )])
+                (hash_addr, full_address, lat, lng))
+            ])
             
             await ds.execute_query("""
                 UPDATE chauffeur SET hash_adresse = %s WHERE chauffeur_id = %s
@@ -854,15 +744,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                     raise ValueError("Échec géocodage lieu de prise en charge")
                     
                 hash_addr = generate_address_hash(pickup_addr)
-                await ds.execute_transaction([(
-                    """
+                await ds.execute_transaction([
+                    ("""
                     INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (hash_address) DO UPDATE
                     SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                     """,
-                    (hash_addr, pickup_addr, lat, lng)
-                )])
+                    (hash_addr, pickup_addr, lat, lng))
+                ])
                 await ds.execute_query("""
                     UPDATE course SET hash_lieu_prise_en_charge = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
@@ -874,15 +764,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                     raise ValueError("Échec géocodage destination")
                     
                 hash_addr = generate_address_hash(dest_addr)
-                await ds.execute_transaction([(
-                    """
+                await ds.execute_transaction([
+                    ("""
                     INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (hash_address) DO UPDATE
                     SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                     """,
-                    (hash_addr, dest_addr, lat, lng)
-                )])
+                    (hash_addr, dest_addr, lat, lng))
+                ])
                 await ds.execute_query("""
                     UPDATE course SET hash_destination = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
@@ -949,12 +839,15 @@ async def group_courses(ds: PostgresDataSource):
                 pickup_coords = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
                 if pickup_coords:
                     lat, lng = pickup_coords  # Déballage du tuple
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (hash_address) DO UPDATE
                         SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-                    """, (hash_prise_en_charge, course['lieu_prise_en_charge'], lat, lng))])
+                        """,
+                        (hash_prise_en_charge, course['lieu_prise_en_charge'], lat, lng))
+                    ])
                     course['hash_lieu_prise_en_charge'] = hash_prise_en_charge
 
             if not course['destination_exists']:
@@ -963,12 +856,15 @@ async def group_courses(ds: PostgresDataSource):
                 dest_coords = await geocoding_service.get_coordinates(course['destination'])
                 if dest_coords:
                     lat, lng = dest_coords  # Déballage du tuple
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (hash_address) DO UPDATE
                         SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-                    """, (hash_destination, course['destination'], lat, lng))])
+                        """,
+                        (hash_destination, course['destination'], lat, lng))
+                    ])
                     course['hash_destination'] = hash_destination
 
             # Créer le hash de route si nécessaire
@@ -983,7 +879,8 @@ async def group_courses(ds: PostgresDataSource):
                     pickup_lat, pickup_lng = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
                     dest_lat, dest_lng = await geocoding_service.get_coordinates(course['destination'])
                     
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO coursecalcul (
                             hash_route, lieu_prise_en_charge, destination,
                             lieu_prise_en_charge_lat, lieu_prise_en_charge_lng,
@@ -1004,21 +901,21 @@ async def group_courses(ds: PostgresDataSource):
                             duree_trajet_secondes = EXCLUDED.duree_trajet_secondes,
                             points_passage = EXCLUDED.points_passage,
                             points_passage_coords = EXCLUDED.points_passage_coords
-                    """, {
-                        'hash_route': hash_route,
-                        'lieu_prise_en_charge': course['lieu_prise_en_charge'],
-                        'destination': course['destination'],
-                        'lieu_prise_en_charge_lat': pickup_lat,
-                        'lieu_prise_en_charge_lng': pickup_lng,
-                        'destination_lat': dest_lat,
-                        'destination_lng': dest_lng,
-                        'distance_vol_oiseau_km': route_details['distance_vol_oiseau_km'],
-                        'distance_routiere_km': route_details['distance_routiere_km'],
-                        'duree_trajet_min': route_details['duree_trajet_min'],
-                        'duree_trajet_secondes': route_details['duree_trajet_secondes'],
-                        'points_passage': route_details['points_passage'],
-                        'points_passage_coords': route_details['points_passage_coords']
-                    })])
+                        """, {
+                            'hash_route': hash_route,
+                            'lieu_prise_en_charge': course['lieu_prise_en_charge'],
+                            'destination': course['destination'],
+                            'lieu_prise_en_charge_lat': pickup_lat,
+                            'lieu_prise_en_charge_lng': pickup_lng,
+                            'destination_lat': dest_lat,
+                            'destination_lng': dest_lng,
+                            'distance_vol_oiseau_km': route_details['distance_vol_oiseau_km'],
+                            'distance_routiere_km': route_details['distance_routiere_km'],
+                            'duree_trajet_min': route_details['duree_trajet_min'],
+                            'duree_trajet_secondes': route_details['duree_trajet_secondes'],
+                            'points_passage': route_details['points_passage'],
+                            'points_passage_coords': route_details['points_passage_coords']
+                        })])
                     course['hash_route'] = hash_route
 
         # 3. Créer un dictionnaire pour stocker les groupes
@@ -1065,7 +962,8 @@ async def group_courses(ds: PostgresDataSource):
             )
 
             # Insérer le groupe
-            groupe_id = await ds.execute_transaction([("""
+            groupe_id = await ds.execute_transaction([
+                ("""
                 INSERT INTO courseGroupe (
                     lieu_prise_en_charge,
                     destination,
@@ -1091,30 +989,77 @@ async def group_courses(ds: PostgresDataSource):
                     %(hash_lieu_prise_en_charge)s,
                     %(hash_destination)s
                 ) RETURNING groupe_id
-            """, {
-                'lieu_prise_en_charge': group_key[0],
-                'destination': group_key[1],
-                'date_heure_prise_en_charge': group_key[2],
-                'nombre_personne': group_data['total_personnes'],
-                'vip': group_data['vip'],
-                'lieu_prise_en_charge_json': lieu_prise_en_charge_json,
-                'destination_json': destination_json,
-                'date_heure_prise_en_charge_json': date_heure_prise_en_charge_json,
-                'hash_route': group_data['hash_route'],
-                'hash_lieu_prise_en_charge': group_data['hash_lieu_prise_en_charge'],
-                'hash_destination': group_data['hash_destination']
-            })])
+                """, {
+                    'lieu_prise_en_charge': group_key[0],
+                    'destination': group_key[1],
+                    'date_heure_prise_en_charge': group_key[2],
+                    'nombre_personne': group_data['total_personnes'],
+                    'vip': group_data['vip'],
+                    'lieu_prise_en_charge_json': lieu_prise_en_charge_json,
+                    'destination_json': destination_json,
+                    'date_heure_prise_en_charge_json': date_heure_prise_en_charge_json,
+                    'hash_route': group_data['hash_route'],
+                    'hash_lieu_prise_en_charge': group_data['hash_lieu_prise_en_charge'],
+                    'hash_destination': group_data['hash_destination']
+                })])
 
             # Mettre à jour les courses
             course_ids_str = ",".join(str(course_id) for course_id in group_data['course_ids'])
-            await ds.execute_transaction([("""
+            await ds.execute_transaction([
+                ("""
                 UPDATE course
                 SET groupe_id = %s
                 WHERE course_id = ANY(STRING_TO_ARRAY(%s, ',')::bigint[])
-            """, (groupe_id[0][0], course_ids_str))])
+                """, (groupe_id[0][0], course_ids_str))
+            ])
 
         logger.info(f"Groupage terminé : {len(groups)} groupes créés ou mis à jour")
 
     except Exception as e:
         logger.error(f"Erreur lors du groupage des courses : {str(e)}")
         raise
+
+async def process_course_group(processor, groupe_ids):
+    """Traite un groupe de courses (mise à jour coursecalcul)"""
+    for groupe_id in groupe_ids:
+        try:
+            await processor.process_course_groupe(groupe_id)
+            logger.info(f"Groupe {groupe_id} traité avec succès")
+        except Exception as e:
+            logger.error(f"Erreur traitement groupe {groupe_id}: {str(e)}")
+
+async def run_dispatch_solver_orchestration(
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
+    milp_time_limit: int = 300
+):
+    """Orchestration complète du calcul des groupes et du dispatch (mise à jour coursecalcul puis solveur)"""
+    from app.core.course_groupe_processor import CourseGroupeProcessor
+    ds = PostgresDataSource()
+    try:
+        processor = CourseGroupeProcessor(ds)
+        groupes = await ds.fetch_all("""
+            SELECT cg.groupe_id
+            FROM courseGroupe cg
+            LEFT JOIN coursecalcul cc ON cg.hash_route = cc.hash_route
+            WHERE cg.hash_route IS NULL OR cg.hash_route = ''
+            OR cc.duree_trajet_min IS NULL OR cc.distance_routiere_km IS NULL
+            OR cc.points_passage_coords IS NULL OR cc.distance_vol_oiseau_km IS NULL
+            OR cc.duree_trajet_secondes IS NULL OR cc.points_passage IS NULL
+        """)
+        logger.info(f"Nombre de groupes à traiter: {len(groupes)}")
+        if not groupes:
+            logger.info("Aucun groupe calcul de rouep à traiter Table : courseCalcul")
+            
+
+        groupe_ids = [groupe['groupe_id'] for groupe in groupes]
+        await process_course_group(processor, groupe_ids)
+        logger.info("Début du processus de dispatch...")
+        assignments = await solve_dispatch_problem(ds, date_begin, date_end, milp_time_limit)
+        logger.info(f"Dispatch terminé avec {len(assignments)} affectations")
+        return assignments
+    except Exception as e:
+        logger.error(f"Échec critique: {str(e)}", exc_info=True)
+        raise
+    finally:
+        await ds.close()
