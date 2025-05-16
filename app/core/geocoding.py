@@ -59,9 +59,6 @@ class GeocodingService:
             "components": "country:fr"
         }
         
-        print("DEBUG: Clé API utilisée :", params['key'])  # Temporaire
-        logger.debug(f"Requête avec clé : {params['key']}")
-        
         try:
             async with httpx.AsyncClient() as client:
                 r = await client.get(

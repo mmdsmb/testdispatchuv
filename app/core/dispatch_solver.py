@@ -14,9 +14,11 @@ import httpx
 import hashlib
 from typing import Tuple, Optional, List, Dict, Any
 from app.core.geocoding import geocoding_service
-from app.core.utils import generate_address_hash
+from app.core.utils import generate_address_hash, save_and_upload_to_drive
 from decimal import Decimal  # Ensure this import exists at the top of the file
 import json
+from app.core.chauffeur_processor import ChauffeurProcessor
+from app.core.course_groupe_processor import CourseGroupeProcessor  
 
 # Configuration du logging
 logging.basicConfig(
@@ -414,6 +416,12 @@ async def solve_dispatch_problem(
     logger.info("=== DÉBUT DU DISPATCH ===")
     logger.info(f"Paramètres - Date début: {date_begin}, Date fin: {date_end}, Timeout MILP: {milp_time_limit}s")
     
+    # Configurer l'export
+    FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+    if not FOLDER_ID:
+        logger.error("GOOGLE_DRIVE_FOLDER_ID non trouvé dans le fichier .env Configuration Google Drive manquante")
+    
+    
     try:
         # 1. Récupération des données
         logger.info("Étape 1/4: Récupération des données...")
@@ -491,10 +499,36 @@ async def solve_dispatch_problem(
                     if (g['id'],c['id']) in solo_cost and not(g['ng']<=4 and c['n']>4):
                         assign[g['id']].append({"chauffeur":c['id'],"trajet":"simple"})
                         rem -= c['n']
+        
+        
+        try:
+            logger.info("Génération et téléchargement des rapports from_calculation...")
+            file_id_avant = await generate_and_upload_affectation_reports_from_calculation(
+                groupes=groupes,
+                assignments=assign,
+                chauffeurs=chauffeurs,
+
+                folder_id=FOLDER_ID
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération et du téléchargement des rapports from_calculation: {str(e)}")
+            
 
         # 5. Sauvegarde
         logger.info("Sauvegarde des affectations...")
         await save_affectations(ds, assign)
+        
+        try:
+            logger.info("Génération et téléchargement des rapports from_db...")
+            file_id_apres = await generate_and_upload_affectation_reports_from_db(
+                date_begin=date_begin,
+                date_end=date_end,
+                ds=ds,
+                folder_id=FOLDER_ID
+            )   
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération et du téléchargement des rapports from_db: {str(e)}")
+            
 
         duration = time.perf_counter() - start_time
         logger.info(f"=== DISPATCH TERMINÉ AVEC SUCCÈS ===")
@@ -1034,9 +1068,14 @@ async def run_dispatch_solver_orchestration(
     milp_time_limit: int = 300
 ):
     """Orchestration complète du calcul des groupes et du dispatch (mise à jour coursecalcul puis solveur)"""
-    from app.core.course_groupe_processor import CourseGroupeProcessor
+
     ds = PostgresDataSource()
     try:
+        # 1. Traiter les adresses des chauffeurs
+        chauffeur_processor = ChauffeurProcessor(ds)
+        await chauffeur_processor.process_chauffeur_addresses()
+        
+        # 2. Traiter les adresses des coursesgroupes et calculs de routes
         processor = CourseGroupeProcessor(ds)
         groupes = await ds.fetch_all("""
             SELECT cg.groupe_id
@@ -1063,3 +1102,112 @@ async def run_dispatch_solver_orchestration(
         raise
     finally:
         await ds.close()
+
+async def generate_and_upload_affectation_reports_from_calculation(
+    groupes: List[Dict],
+    assignments: Dict,
+    chauffeurs: List[Dict],
+    folder_id: str
+) -> Tuple[str, str]:
+    """
+    Génère et upload deux rapports Excel (avant/après insertion) pour les affectations.
+    
+    Args:
+        groupes: Liste des groupes à affecter
+        recuit_assignments: Résultats d'affectation des chauffeurs
+        chauffeurs: Liste complète des chauffeurs
+        folder_id: ID du dossier Google Drive
+        
+    Returns:
+        file_id_avant
+    """
+    # 1. Créer le rapport avant insertion (basé sur votre code existant)
+    rows = []
+    for g in groupes:
+        row = {
+            "group_id": g['id'],
+            "N": g['ng'],
+            "pickup_date": g['pickup_date'],
+            "pickup_time": g['t'],
+            "duree_trajet_min": g['duree_trajet_min'],
+            "lieu_prise_en_charge": g.get("pickup_address", ""),
+            "destination": g.get("dropoff_address", "")
+        }
+        aff_list = assignments.get(g['id'], [])
+
+        for i in range(20):  # Support pour jusqu'à 20 chauffeurs
+            if i < len(aff_list):
+                a = aff_list[i]
+                ch = next((ch for ch in chauffeurs if ch['id'] == a["chauffeur"]), {})
+                row[f"chauffeur_{i+1}_id"] = ch.get('id', '')
+                row[f"chauffeur_{i+1}_nom_prenom"] = ch.get('prenom_nom', '')
+                row[f"chauffeur_{i+1}_trajet"] = a["trajet"]
+                row[f"chauffeur_{i+1}_n"] = ch.get('n', '')
+                row[f"chauffeur_{i+1}_combo_id"] = a.get("combo_id", '')
+                row[f"chauffeur_{i+1}_combiné_avec"] = ','.join(map(str, a.get("combiné_avec", [])))
+            else:
+                row[f"chauffeur_{i+1}_id"] = ''
+                row[f"chauffeur_{i+1}_nom_prenom"] = ''
+                row[f"chauffeur_{i+1}_trajet"] = ''
+                row[f"chauffeur_{i+1}_n"] = ''
+                row[f"chauffeur_{i+1}_combo_id"] = ''
+                row[f"chauffeur_{i+1}_combiné_avec"] = ''
+
+        rows.append(row)
+
+    df_avant = pd.DataFrame(rows)
+    
+    # Upload du fichier avant insertion
+    file_id_avant = await save_and_upload_to_drive(
+        df=df_avant,
+        folder_id=folder_id,
+        file_prefix="affectations_from_calculation",
+        subfolder_name="affectations",
+        format_excel=True,
+        index=False
+    )
+    
+    return file_id_avant
+
+
+async def generate_and_upload_affectation_reports_from_db(
+    date_begin: str,
+    date_end: str,
+    ds: PostgresDataSource,
+    folder_id: str
+) -> Tuple[str, str]:
+    """
+    Génère et upload deux rapports Excel (avant/après insertion) pour les affectations.
+    
+    Args:
+        date_begin: Date de début de la période
+        date_end: Date de fin de la période
+        ds: DataSource pour requêter la base de données
+        folder_id: ID du dossier Google Drive
+        
+    Returns:
+         file_id_apres
+    """
+    
+    # 2. Récupérer les données après insertion depuis la table chaufeuraffectation
+    query = f"""
+        SELECT 
+            ca.*
+        FROM chaufeuraffectation ca
+        WHERE ca.date_prise_en_charge BETWEEN '{date_begin}' AND '{date_end}'
+        ORDER BY ca.date_prise_en_charge, ca.groupe_id
+    """
+    affectations_db = await ds.fetch_all_dict(query)
+    df_apres = pd.DataFrame(affectations_db)
+    
+    # Upload du fichier après insertion
+    file_id_apres = await save_and_upload_to_drive(
+        df=df_apres,
+        folder_id=folder_id,
+        file_prefix="affectations_from_db",
+        subfolder_name="affectations",
+        format_excel=True,
+        index=False
+    )
+    
+    return  file_id_apres

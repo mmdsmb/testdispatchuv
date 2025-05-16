@@ -5,7 +5,7 @@ import numpy as np
 import os
 from datetime import datetime
 import logging
-from typing import Optional
+from typing import Optional, Dict
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 from datetime import datetime
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import json
 import base64
 from googleapiclient.discovery import build
-from openpyxl.styles import Font, PatternFill, Border, Side
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from app.db.postgres import PostgresDataSource
 
@@ -556,3 +556,57 @@ async def extract_data_from_query(query: str) -> pd.DataFrame:
     finally:
         # Fermer la connexion dans tous les cas (succès ou erreur)
         await db_source.disconnect()
+        
+# async def save_and_upload_to_drive(df, folder_id, file_prefix, subfolder_name, format_excel, index):
+#     """Sauvegarde et upload un DataFrame vers Google Drive en créant le sous-dossier si nécessaire"""
+#     try:
+#         # 1. Vérifier/créer le sous-dossier
+#         subfolder_id = await create_or_get_subfolder(folder_id, subfolder_name)
+        
+#         # 2. Sauvegarder le fichier Excel temporaire
+#         output_file = f"{file_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+#         df.to_excel(output_file, index=index)
+        
+#         # 3. Upload vers le sous-dossier (implémentez votre logique d'upload ici)
+#         # Exemple fictif :
+#         file_id = await upload_to_drive(output_file, subfolder_id)
+#         return file_id
+        
+#     except Exception as e:
+#         logger.error(f"Erreur lors de l'upload vers Drive: {str(e)}")
+#         raise
+
+# async def create_or_get_subfolder(parent_id, folder_name):
+#     """Crée ou récupère un sous-dossier dans Google Drive"""
+#     # Implémentez la logique de création/récupération du sous-dossier
+#     # Exemple fictif :
+#     existing_folder = await check_folder_exists(parent_id, folder_name)
+#     if existing_folder:
+#         return existing_folder['id']
+#     else:
+#         return await create_folder(parent_id, folder_name)
+
+# async def create_folder(parent_id: str, folder_name: str) -> str:
+#     """Crée un dossier dans Google Drive et retourne son ID"""
+#     service = get_google_drive_service()
+#     folder_metadata = {
+#         'name': folder_name,
+#         'mimeType': 'application/vnd.google-apps.folder',
+#         'parents': [parent_id]
+#     }
+#     folder = service.files().create(
+#         body=folder_metadata,
+#         fields='id'
+#     ).execute()
+#     return folder.get('id')
+
+# async def check_folder_exists(parent_id: str, folder_name: str) -> Optional[Dict]:
+#     """Vérifie si un dossier existe déjà dans Google Drive"""
+#     service = get_google_drive_service()
+#     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+#     results = service.files().list(
+#         q=query,
+#         fields="files(id, name)"
+#     ).execute()
+#     folders = results.get('files', [])
+#     return folders[0] if folders else None
