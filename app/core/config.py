@@ -81,12 +81,12 @@ class Settings(BaseSettings):
     TIMEZONE : str = 'Europe/Paris'  # Fuseau horaire par défaut
     PAYS_ORGANISATEUR : str = "France"
     ADRESSE_SALLE : str = "2, Rue de la Falaise 95520 Osny, France"
-    JOUR_EVENEMENT : str    = "2024-05-10"
+    JOUR_EVENEMENT : str    = "2025-05-24"
     JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE : int  = 8 # heure de prise en charge des clients ou invités pour les amener à la salle (une valeur entre 0 et 23)
     JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE : int = 30 # minutes de prise en charge des clients ou invités pour les amener à la salle (une valeur entre 0 et 59)
     # la combinaison de JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE et JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE donne l'heure de prise en charge des clients ou invités pour les amener à la salle
     #"2024-05-10 08:30:00" si on a JOUR_EVENEMENT_HEURE_PRISE_EN_CHARGE = 8 et JOUR_EVENEMENT_MINUTE_PRISE_EN_CHARGE = 30
-    JOUR_FIN_EVENEMENT : str = "2024-05-11"
+    JOUR_FIN_EVENEMENT : str = "2025-05-25"
     NOMBRE_MINUTES_AVANT_RETOUR : int = 180 #  pour calculer  la date_heure_prise_en_charge -180 minutes (3heures) par exemple avanr le depart du vol  
     #DUREE_ENTRE_MISSION_CHAUFFEUR : int   = 130 # delai de latence entre deux missions pour un chauffeur en minutes ou entre 2 prise en charge
     #GROUPE_PRIORITE_VANNE : int  = 12 # Pour les réaffectation SI >= 12 PRILIVIGIER VANNE + PETITE VOITURE . ENTRE 13 ET 16 2 VANNES -> Fixer

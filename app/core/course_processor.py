@@ -269,8 +269,8 @@ class CourseProcessor:
                       "transport_aller", "transport_retour" ,
                       "erreur_aller" , "erreur_retour"
                 FROM "Hotes" 
-                WHERE evenement_annee = {passed_year}
-                AND "ID" is not null
+                WHERE 
+                 "ID" is not null
                 AND ( "Prenom-Nom" is not null and "Prenom-Nom" != '' and "Prenom-Nom" != 'None' and "Prenom-Nom" != ' ')
                 AND ( "Nombre-prs-AR" is not null and "Nombre-prs-AR" != '' and "Nombre-prs-AR" != 'None' and "Nombre-prs-AR" != ' ')
                 AND ( "Arrivee-date" is not null  and "Arrivee-date" != '' and "Arrivee-date" != 'None' and "Arrivee-date" != ' ')
@@ -292,8 +292,8 @@ class CourseProcessor:
 
                         "transport_aller", "transport_retour" ,"erreur_aller" ,"erreur_retour"
                 FROM "Hotes" 
-                WHERE evenement_annee = {passed_year}
-                AND "ID" is not null
+                WHERE 
+                 "ID" is not null
                 AND ( "Prenom-Nom" is not null and "Prenom-Nom" != '' and "Prenom-Nom" != 'None' and "Prenom-Nom" != ' ')
                 AND "Retour-date" is not null and "Retour-date" != '' and "Retour-date" != 'None' and "Retour-date" != ' '         
                 AND "Nombre-prs-Ret" is not null  and "Nombre-prs-Ret" != '' and "Nombre-prs-Ret" != 'None' and "Nombre-prs-Ret" != ' '

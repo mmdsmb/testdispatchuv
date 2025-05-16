@@ -202,19 +202,26 @@ def verifier_champs_manquants(row, champs_a_verifier):
     return ', '.join(champs_manquants) if champs_manquants else ''
 
 def clean_integer(value):
-    """Nettoie et valide une valeur devant être un entier."""
-    if pd.isna(value) or value == '':
-        return None, "Valeur manquante"
-    
+    """Nettoie une valeur numérique et retourne toujours (valeur_clean, erreur)"""
     try:
-        # Supprimer les espaces et caractères non numériques
-        cleaned = ''.join(c for c in str(value) if c.isdigit())
-        if not cleaned:
-            return None, "Valeur non numérique"
+        # Cas des valeurs manquantes
+        if pd.isna(value) or str(value).strip() in ['', 'nan', 'None']:
+            return None, "Valeur manquante"
+            
+        # Conversion et nettoyage
+        cleaned = str(value).strip().replace(' ', '')
+        if not cleaned:  # Chaîne vide après nettoyage
+            return None, "Valeur vide"
+            
+        # Vérification des nombres négatifs
+        if cleaned.startswith('-'):
+            return None, "Valeur négative non autorisée"
+            
+        # Conversion en entier
+        return int(float(cleaned)), None  # Gère les floats comme "5.0"
         
-        return int(cleaned), None
     except Exception as e:
-        return None, f"Erreur conversion: {str(e)}"
+        return None, f"Erreur de conversion: {str(e)}"
 
 def decode_base64_credentials(encoded_credentials):
     """Décode les credentials encodés en base64."""

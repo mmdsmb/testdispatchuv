@@ -117,21 +117,21 @@ class HotesSynchronizer:
         """Sauvegarde les données dans PostgreSQL"""
         query = """
             INSERT INTO "Hotes" (
-                "ID", "Prenom-Nom", "Telephone", "vip", "Nombre-prs-AR",
+                "ID", "Prenom-Nom", "Telephone", vip, "Nombre-prs-AR",
                 "Provenance", "Arrivee-date", "Arrivee-vol", "Arrivee-heure",
                 "Arrivee-Lieux", "transport_aller", "Hebergeur", "RESTAURATION",
                 "Telephone-hebergeur", "Adresse-hebergement", "Retour-date",
                 "Nombre-prs-Ret", "Retour-vol", "Retour-heure", "Retour-Lieux",
-                "Destination", "transport_retour", "Chauffeur", "updated_at"
+                "Destination", "transport_retour", "Chauffeur"
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, NOW()
+                %s, %s, %s
             )
             ON CONFLICT ("ID") DO UPDATE SET
                 "Prenom-Nom" = EXCLUDED."Prenom-Nom",
                 "Telephone" = EXCLUDED."Telephone",
-                "vip" = EXCLUDED."vip",
+                vip = EXCLUDED.vip,
                 "Nombre-prs-AR" = EXCLUDED."Nombre-prs-AR",
                 "Provenance" = EXCLUDED."Provenance",
                 "Arrivee-date" = EXCLUDED."Arrivee-date",
@@ -150,11 +150,22 @@ class HotesSynchronizer:
                 "Retour-Lieux" = EXCLUDED."Retour-Lieux",
                 "Destination" = EXCLUDED."Destination",
                 "transport_retour" = EXCLUDED."transport_retour",
-                "Chauffeur" = EXCLUDED."Chauffeur",
-                "updated_at" = NOW()
+                "Chauffeur" = EXCLUDED."Chauffeur"
         """
         
-        records = [tuple(record.values()) for record in df.to_dict('records')]
+        # Select only the required columns in correct order
+        required_columns = [
+            'ID', 'Prenom-Nom', 'Telephone', 'vip', 'Nombre-prs-AR',
+            'Provenance', 'Arrivee-date', 'Arrivee-vol', 'Arrivee-heure',
+            'Arrivee-Lieux', 'transport_aller', 'Hebergeur', 'RESTAURATION',
+            'Telephone-hebergeur', 'Adresse-hebergement', 'Retour-date',
+            'Nombre-prs-Ret', 'Retour-vol', 'Retour-heure', 'Retour-Lieux',
+            'Destination', 'transport_retour', 'Chauffeur'
+        ]
+        
+        # Convert to list of tuples with correct column order
+        records = df[required_columns].apply(lambda row: tuple(row), axis=1).tolist()
+        
         await self.ds.execute_transaction([(query, record) for record in records])
 
     def _clean_dates(self, df: pd.DataFrame) -> pd.DataFrame:
