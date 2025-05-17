@@ -8,6 +8,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.core.config import settings
 from app.db.postgres import PostgresDataSource
+from app.core.utils import save_and_upload_to_drive
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class HotesSynchronizer:
         return df.replace({'nan': None, 'None': None, '': None})
 
     async def _save_data(self, df: pd.DataFrame):
-        """Sauvegarde les données dans PostgreSQL"""
+        """Sauvegarde les données dans PostgreSQL et exporte les lignes sans ID dans un fichier Excel."""
         query = """
             INSERT INTO "Hotes" (
                 "ID", "Prenom-Nom", "Telephone", vip, "Nombre-prs-AR",
@@ -124,15 +125,18 @@ class HotesSynchronizer:
                 "Nombre-prs-Ret", "Retour-vol", "Retour-heure", "Retour-Lieux",
                 "Destination", "transport_retour", "Chauffeur"
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s , %s, %s, %s, %s ,
+                %s, %s, %s, %s,
+                %s,%s, %s, %s,
+                %s, %s, %s,
+                %s , %s, %s, %s,
                 %s, %s, %s
             )
             ON CONFLICT ("ID") DO UPDATE SET
                 "Prenom-Nom" = EXCLUDED."Prenom-Nom",
                 "Telephone" = EXCLUDED."Telephone",
                 vip = EXCLUDED.vip,
-                "Nombre-prs-AR" = EXCLUDED."Nombre-prs-AR",
+                "Nombre-prs-AR" = EXCLUDED."Nombre-prs-AR" ,
                 "Provenance" = EXCLUDED."Provenance",
                 "Arrivee-date" = EXCLUDED."Arrivee-date",
                 "Arrivee-vol" = EXCLUDED."Arrivee-vol",
@@ -152,8 +156,7 @@ class HotesSynchronizer:
                 "transport_retour" = EXCLUDED."transport_retour",
                 "Chauffeur" = EXCLUDED."Chauffeur"
         """
-        
-        # Select only the required columns in correct order
+
         required_columns = [
             'ID', 'Prenom-Nom', 'Telephone', 'vip', 'Nombre-prs-AR',
             'Provenance', 'Arrivee-date', 'Arrivee-vol', 'Arrivee-heure',
@@ -162,12 +165,55 @@ class HotesSynchronizer:
             'Nombre-prs-Ret', 'Retour-vol', 'Retour-heure', 'Retour-Lieux',
             'Destination', 'transport_retour', 'Chauffeur'
         ]
-        
-        # Convert to list of tuples with correct column order
-        records = df[required_columns].apply(lambda row: tuple(row), axis=1).tolist()
-        
-        await self.ds.execute_transaction([(query, record) for record in records])
 
+        # Convertir les données en listes de tuples
+        records = df[required_columns].apply(lambda row: tuple(row), axis=1).tolist()
+
+        # Fonction pour nettoyer l'ID
+        def clean_id(value):
+            if pd.isna(value) or value in (None, "", "nan"):
+                return None
+            try:
+                return int(float(value))
+            except (ValueError, TypeError):
+                return None
+
+        # Séparer les lignes valides et les lignes sans ID
+        valid_records = []
+        error_records = []
+
+        for record in records:
+            cleaned_id = clean_id(record[0])
+            if cleaned_id is not None:
+                valid_records.append((cleaned_id, *record[1:]))
+            else:
+                error_records.append(record)
+
+        # Sauvegarder les lignes valides
+        if valid_records:
+            await self.ds.execute_transaction([(query, record) for record in valid_records])
+
+        # Exporter les lignes sans ID dans un fichier Excel
+        if error_records:
+            error_df = pd.DataFrame(error_records, columns=required_columns)
+            #error_file_path = "erreurs_hotes.xlsx"
+            #error_df.to_excel(error_file_path, index=False)
+            #logger.error(f"{len(error_records)} lignes sans ID exportées dans {error_file_path}")
+            # Uploader le fichier d'erreurs vers Drive
+            try:
+         
+                folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')  # ID du dossier parent dans Drive
+                logger.error("GOOGLE_DRIVE_FOLDER_ID non trouvé dans le fichier .env")
+                await save_and_upload_to_drive(
+                    df=error_df,
+                    folder_id=folder_id,
+                    file_prefix="erreurs_hotes",
+                    subfolder_name="hotes",
+                    format_excel=True,
+                    index=False
+                )
+            except Exception as e:
+                logger.error(f"Échec de l'upload des erreurs hotes vers Drive : {e}")
     def _clean_dates(self, df: pd.DataFrame) -> pd.DataFrame:
         """Nettoie les dates au format YYYY-MM-DD"""
         date_cols = ['Arrivee-date', 'Retour-date']

@@ -26,6 +26,7 @@ def generate_address_hash(address: str) -> str:
     """Génère un hash MD5 standardisé pour les adresses"""
     return hashlib.md5(address.strip().lower().encode('utf-8')).hexdigest()
 
+
 def generate_route_hash(pickup_address: str, destination_address: str) -> str:
     """Génère un hash unique pour un trajet (combinaison des deux adresses)"""
     combined = f"{pickup_address.strip().lower()}_{destination_address.strip().lower()}"

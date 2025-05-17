@@ -1,0 +1,1 @@
+- RETOUR LENDEMAIN du magal voir si on peut adapter le groupage similarite de trajet pour le retour pour ne pas grouper charles de gaulle et beauvais. -> sinon le groupe simpl est plus adapté pour le retour
