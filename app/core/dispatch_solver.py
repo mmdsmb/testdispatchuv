@@ -276,7 +276,10 @@ async def prepare_chauffeurs(
     elif date_end:
         query += " AND dc.date_debut <= %(date_end)s"
         params.update({"date_end": date_end})
-
+        
+    #print(query)
+    #print(params)
+    
     rows = await ds.fetch_all(query, params)
     
     if not rows:
@@ -1461,12 +1464,24 @@ async def update_driver_assignment_metadata(
                     WHERE cg.groupe_id = ca.groupe_id
                 ),
                 destination = (
-                    SELECT cg.destination
+                    SELECT CASE
+                        WHEN cg.destination != cg.destination_court 
+                             AND cg.destination_court IS NOT NULL
+                             AND cg.destination IS NOT NULL
+                        THEN CONCAT(cg.destination_court, '-', cg.destination)
+                        ELSE COALESCE(cg.destination_court, cg.destination)
+                    END
                     FROM courseGroupe cg
                     WHERE cg.groupe_id = ca.groupe_id
                 ),
                 lieu_prise_en_charge = (
-                    SELECT cg.lieu_prise_en_charge
+                    SELECT CASE
+                        WHEN cg.lieu_prise_en_charge != cg.lieu_prise_en_charge_court 
+                             AND cg.lieu_prise_en_charge_court IS NOT NULL
+                             AND cg.lieu_prise_en_charge IS NOT NULL
+                        THEN CONCAT(cg.lieu_prise_en_charge_court, '-', cg.lieu_prise_en_charge)
+                        ELSE COALESCE(cg.lieu_prise_en_charge_court, cg.lieu_prise_en_charge)
+                    END
                     FROM courseGroupe cg
                     WHERE cg.groupe_id = ca.groupe_id
                 )
@@ -1476,4 +1491,88 @@ async def update_driver_assignment_metadata(
         return True
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour des métadonnées des affectations: {str(e)}")
+        return False
+
+async def update_affectations_status(
+    ds: PostgresDataSource,
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
+    group_ids: Optional[List[int]] = None,
+    chauffeur_ids: Optional[List[int]] = None,
+    old_status: str = "draft",
+    new_status: str = "pending"
+) -> bool:
+    """
+    Met à jour le statut des affectations avec contrôle de l'ancien statut.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        date_begin: Date de début (optionnelle)
+        date_end: Date de fin (optionnelle)
+        group_ids: Liste d'IDs de groupes (optionnelle)
+        chauffeur_ids: Liste d'IDs de chauffeurs (optionnelle)
+        old_status: Statut actuel à filtrer ("draft" par défaut)
+        new_status: Nouveau statut ("pending" par défaut)
+    
+    Returns:
+        bool: True si la mise à jour a réussi, False sinon
+    """
+    try:
+        # Construction dynamique de la requête
+        base_query = """
+            UPDATE chauffeurAffectation ca
+            SET 
+                statut_affectation = %(new_status)s::varchar,
+                date_pending = CASE 
+                    WHEN %(new_status)s::varchar = 'pending' THEN NOW() 
+                    ELSE date_pending 
+                END,
+                date_accepted = CASE 
+                    WHEN %(new_status)s::varchar = 'accepted' THEN NOW() 
+                    ELSE date_accepted 
+                END,
+                date_done = CASE 
+                    WHEN %(new_status)s::varchar = 'done' THEN NOW() 
+                    ELSE date_done 
+                END
+            FROM courseGroupe cg
+            WHERE ca.groupe_id = cg.groupe_id
+            AND ca.statut_affectation = %(old_status)s::varchar
+        """
+        
+        params = {
+            "new_status": new_status,
+            "old_status": old_status
+        }
+        conditions = []
+        
+        # Ajout des conditions optionnelles
+        if date_begin:
+            conditions.append("cg.date_heure_prise_en_charge >= %(date_begin)s")
+            params["date_begin"] = date_begin
+        if date_end:
+            conditions.append("cg.date_heure_prise_en_charge <= %(date_end)s")
+            params["date_end"] = date_end
+        if group_ids:
+            conditions.append("ca.groupe_id = ANY(%(group_ids)s)")
+            params["group_ids"] = group_ids
+        if chauffeur_ids:
+            conditions.append("ca.chauffeur_id = ANY(%(chauffeur_ids)s)")
+            params["chauffeur_ids"] = chauffeur_ids
+        
+        # Combinaison des conditions
+        if conditions:
+            base_query += " AND " + " AND ".join(conditions)
+        
+        # Exécution
+        result = await ds.execute_transaction([(base_query, params)])
+        logger.info(
+            f"Mise à jour statut: {old_status}→{new_status} pour "
+            f"{result.rowcount} affectations (groupes: {len(group_ids or [])}, "
+            f"chauffeurs: {len(chauffeur_ids or [])})"
+        )
+        return True
+        
+    except Exception as e:
+        logger.error(f"Échec de la mise à jour du statut {old_status}→{new_status}: {str(e)}")
         return False

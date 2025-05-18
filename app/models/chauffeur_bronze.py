@@ -81,7 +81,7 @@ class ChauffeurBronzeSync:
     def __init__(self):
         self.supabase = create_client(os.getenv('SUPABASE_URL'), os.getenv('SUPABASE_KEY'))
         self.drive_service = self._authenticate_drive()
-        self.db = PostgresDataSource()
+        self.ds = PostgresDataSource()
 
     def _authenticate_drive(self):
         """Authentification avec le compte de service"""
@@ -195,36 +195,86 @@ class ChauffeurBronzeSync:
 
     async def apply_changes(self, changes: Dict) -> Dict:
         try:
-            # Récupérer la configuration
-            settings = get_settings()
-            jour_evenement = settings.JOUR_EVENEMENT
-            evenement_annee = jour_evenement.split('-')[0] if jour_evenement else None
-            evenement_jour = jour_evenement if jour_evenement else None
-
             if changes['to_insert']:
-                # Ajouter les champs evenement aux insertions seulement s'ils sont null
-                for chauffeur in changes['to_insert']:
-                    if chauffeur.get('evenement_annee') is None:
-                        chauffeur['evenement_annee'] = evenement_annee
-                    if chauffeur.get('evenement_jour') is None:
-                        chauffeur['evenement_jour'] = evenement_jour
+                logger.info(f"Préparation de l'insertion de {len(changes['to_insert'])} enregistrements")
                 
-                self.supabase.table('chauffeurbronze').insert(changes['to_insert']).execute()
-                logger.info(f"{len(changes['to_insert'])} nouveaux chauffeurs insérés")
-
-            for update in changes['to_update']:
-                # Ne pas forcer la mise à jour des champs evenement s'ils existent déjà
-                if update['changes'].get('evenement_annee') is None:
-                    update['changes']['evenement_annee'] = evenement_annee
-                if update['changes'].get('evenement_jour') is None:
-                    update['changes']['evenement_jour'] = evenement_jour
+                # Début de la transaction
+                await self.ds.execute_query("BEGIN")
                 
-                self.supabase.table('chauffeurbronze').update(update['changes']).eq('email', update['email']).execute()
-                logger.info(f"Mise à jour du chauffeur email {update['email']}")
-
-            return {'success': True, 'message': 'Changements appliqués avec succès'}
+                for item in changes['to_insert']:
+                    # Log des données avant insertion
+                    logger.info(f"Données à insérer : {item}")
+                    
+                    # Validation des données requises
+                    if not self.validate_data(item):
+                        logger.error(f"Données invalides pour l'insertion : {item}")
+                        continue
+                    
+                    # Construction de la requête UPSERT
+                    query = """
+                    INSERT INTO chauffeurbronze (
+                        horodateur, prenom_nom, telephone, email, type_chauffeur,
+                        nombre_places, code_postal, carburant, commentaires,
+                        disponible_22_debut, disponible_22_fin,
+                        disponible_23_debut, disponible_23_fin,
+                        disponible_24_debut, disponible_24_fin,
+                        disponible_25_debut, disponible_25_fin,
+                        evenement_annee, evenement_jour
+                    ) VALUES (
+                        %(horodateur)s, %(prenom_nom)s, %(telephone)s, %(email)s, %(type_chauffeur)s,
+                        %(nombre_places)s, %(code_postal)s, %(carburant)s, %(commentaires)s,
+                        %(disponible_22_debut)s, %(disponible_22_fin)s,
+                        %(disponible_23_debut)s, %(disponible_23_fin)s,
+                        %(disponible_24_debut)s, %(disponible_24_fin)s,
+                        %(disponible_25_debut)s, %(disponible_25_fin)s,
+                        %(evenement_annee)s, %(evenement_jour)s
+                    )
+                    ON CONFLICT (email) DO UPDATE SET
+                        horodateur = EXCLUDED.horodateur,
+                        prenom_nom = EXCLUDED.prenom_nom,
+                        telephone = EXCLUDED.telephone,
+                        type_chauffeur = EXCLUDED.type_chauffeur,
+                        nombre_places = EXCLUDED.nombre_places,
+                        code_postal = EXCLUDED.code_postal,
+                        carburant = EXCLUDED.carburant,
+                        commentaires = EXCLUDED.commentaires,
+                        disponible_22_debut = EXCLUDED.disponible_22_debut,
+                        disponible_22_fin = EXCLUDED.disponible_22_fin,
+                        disponible_23_debut = EXCLUDED.disponible_23_debut,
+                        disponible_23_fin = EXCLUDED.disponible_23_fin,
+                        disponible_24_debut = EXCLUDED.disponible_24_debut,
+                        disponible_24_fin = EXCLUDED.disponible_24_fin,
+                        disponible_25_debut = EXCLUDED.disponible_25_debut,
+                        disponible_25_fin = EXCLUDED.disponible_25_fin,
+                        evenement_annee = EXCLUDED.evenement_annee,
+                        evenement_jour = EXCLUDED.evenement_jour
+                    RETURNING email
+                    """
+                    
+                    try:
+                        # Exécution de la requête
+                        result = await self.ds.execute_query(query, item)
+                        logger.info(f"Insertion réussie pour l'email : {item.get('email')}")
+                    except Exception as e:
+                        logger.error(f"Erreur lors de l'insertion pour l'email {item.get('email')} : {e}")
+                        # Rollback en cas d'erreur
+                        await self.ds.execute_query("ROLLBACK")
+                        return {'success': False, 'error': str(e)}
+                
+                # Commit de la transaction
+                await self.ds.execute_query("COMMIT")
+                
+                # Vérification finale
+                count_query = "SELECT COUNT(*) FROM chauffeurbronze"
+                count_result = await self.ds.execute_query(count_query)
+                logger.info(f"Nombre total d'enregistrements dans la table : {count_result}")
+                
+                return {'success': True, 'upserted': len(changes['to_insert'])}
+                
         except Exception as e:
-            logger.error(f"Erreur dans apply_changes : {e}")
+            # Rollback en cas d'erreur
+            await self.ds.execute_query("ROLLBACK")
+            logger.error(f"Erreur upsert : {e}")
             return {'success': False, 'error': str(e)}
 
     async def sync(self, file_id: str, auto_apply: bool = False) -> Dict:

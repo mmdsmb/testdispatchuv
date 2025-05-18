@@ -112,4 +112,5 @@ hotes2024.xlsx
 # Ignore all Excel files
 *.xlsx
 *.xls
+*.csv
 
