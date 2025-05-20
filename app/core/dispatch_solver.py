@@ -19,7 +19,7 @@ from decimal import Decimal  # Ensure this import exists at the top of the file
 import json
 from app.core.chauffeur_processor import ChauffeurProcessor
 from app.core.course_groupe_processor import CourseGroupeProcessor  
-from app.config import settings
+from app.core.config import settings
 from app.core.geocoding import geocoding_service
 
 

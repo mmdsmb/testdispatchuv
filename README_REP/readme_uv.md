@@ -4,7 +4,13 @@ git clone <your-repo-url>
 cd <your-repo-name>
 ```
 
-1. Install uv:
+1. Install uv: avec install_uv.sh
+```bash
+chmod +x install_uv.sh
+./install_uv.sh
+```
+ou lancer les commndes ci-dessous.
+
 ```bash
 curl -Ls https://astral.sh/uv/install.sh | sh
 

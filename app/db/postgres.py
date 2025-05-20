@@ -169,3 +169,25 @@ class PostgresDataSource(DataSource):
         """
         flattened_values = [v for item in data for v in item.values()]
         await self.execute(query, flattened_values)
+
+    async def get_supabase_environment(self) -> str:
+        """
+        Récupère l'environnement actuel (Prod/Dev) depuis la table `environment_settings`.
+        Returns:
+            str: 'Prod' ou 'Dev'. Retourne 'Dev' par défaut si la table est vide ou inaccessible.
+        """
+        query = """
+        SELECT environment 
+        FROM environment_settings 
+        ORDER BY updated_at DESC 
+        LIMIT 1
+        """
+        try:
+            if not self.conn:
+                await self.connect()  # Établit la connexion si elle n'existe pas
+            
+            result = await self.fetch_one(query)
+            return result[0] if result else "Dev"
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération de l'environnement : {e}")
+            return "Dev"  # Fallback sécurisé

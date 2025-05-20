@@ -64,6 +64,7 @@ log/
 .env.test.local
 .env.production.local
 .env_dev
+.env_prod
 
 # Database
 *.sqlite3
@@ -113,4 +114,6 @@ hotes2024.xlsx
 *.xlsx
 *.xls
 *.csv
+vne_dev.txt
+dispatch_log.txt
 

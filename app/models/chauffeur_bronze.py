@@ -44,6 +44,7 @@ class ChauffeurBronze(BaseModel):
     commentaires: Optional[str] = Field(None, alias="Commentaires, remarques ou suggestions")
     evenement_annee: Optional[str] = None
     evenement_jour: Optional[str] = None
+    actif: Optional[str] = Field(..., alias="actif")
 
     @field_validator('code_postal', mode='before')
     def code_postal_to_str(cls, v):
@@ -209,7 +210,7 @@ class ChauffeurBronzeSync:
                     if not self.validate_data(item):
                         logger.error(f"Données invalides pour l'insertion : {item}")
                         continue
-                    
+                    print(item['actif'])
                     # Construction de la requête UPSERT
                     query = """
                     INSERT INTO chauffeurbronze (
@@ -219,7 +220,8 @@ class ChauffeurBronzeSync:
                         disponible_23_debut, disponible_23_fin,
                         disponible_24_debut, disponible_24_fin,
                         disponible_25_debut, disponible_25_fin,
-                        evenement_annee, evenement_jour
+                        evenement_annee, evenement_jour,
+                        actif
                     ) VALUES (
                         %(horodateur)s, %(prenom_nom)s, %(telephone)s, %(email)s, %(type_chauffeur)s,
                         %(nombre_places)s, %(code_postal)s, %(carburant)s, %(commentaires)s,
@@ -227,7 +229,8 @@ class ChauffeurBronzeSync:
                         %(disponible_23_debut)s, %(disponible_23_fin)s,
                         %(disponible_24_debut)s, %(disponible_24_fin)s,
                         %(disponible_25_debut)s, %(disponible_25_fin)s,
-                        %(evenement_annee)s, %(evenement_jour)s
+                        %(evenement_annee)s, %(evenement_jour)s,
+                        %(actif)s
                     )
                     ON CONFLICT (email) DO UPDATE SET
                         horodateur = EXCLUDED.horodateur,
@@ -247,7 +250,8 @@ class ChauffeurBronzeSync:
                         disponible_25_debut = EXCLUDED.disponible_25_debut,
                         disponible_25_fin = EXCLUDED.disponible_25_fin,
                         evenement_annee = EXCLUDED.evenement_annee,
-                        evenement_jour = EXCLUDED.evenement_jour
+                        evenement_jour = EXCLUDED.evenement_jour,
+                        actif = EXCLUDED.actif
                     RETURNING email
                     """
                     
@@ -344,7 +348,8 @@ class ChauffeurBronzeSync:
                 "carburant": chauffeur_dict.get("Carburant"),
                 "commentaires": chauffeur_dict.get("Commentaires, remarques ou suggestions"),
                 "evenement_annee": chauffeur_dict.get("evenement_annee"),
-                "evenement_jour": chauffeur_dict.get("evenement_jour")
+                "evenement_jour": chauffeur_dict.get("evenement_jour"),
+                "actif": chauffeur_dict.get("actif")
             }
             
             # Validation des champs obligatoires
