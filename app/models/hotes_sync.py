@@ -29,6 +29,7 @@ class HotesSynchronizer:
             'Arrivee-Lieux': 'Arrivee-Lieux',
             'Transport_Aller': 'transport_aller',
             'Hebergeur': 'Hebergeur',
+            'Herbergeur': 'Hebergeur',
             'RESTAURATION': 'RESTAURATION',
             'Telephone-hebergeur': 'Telephone-hebergeur',
             'Adresse-hebergement': 'Adresse-hebergement',

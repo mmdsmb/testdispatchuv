@@ -1418,6 +1418,8 @@ async def update_driver_assignment_metadata(
                             'lieu_prise_en_charge', co.lieu_prise_en_charge,
                             'destination', co.destination,
                             'telephone_hebergement', co.telephone_hebergement,
+                            'hebergeur', co.hebergeur,
+                            'lieu_prise_en_charge_court', co.lieu_prise_en_charge_court,
                             'groupe_id', co.groupe_id
                         )
                     )
@@ -1440,6 +1442,9 @@ async def update_driver_assignment_metadata(
                             'heure_prise_en_charge', c.date_heure_prise_en_charge,
                             'lieu_prise_en_charge', c.lieu_prise_en_charge,
                             'destination', c.destination,
+                            'hebergeur', c.hebergeur,
+                            'telephone_hebergement', c.telephone_hebergement,
+                            'lieu_prise_en_charge_court', c.lieu_prise_en_charge_court,
                             'groupe_id', c.groupe_id
                         )
                     )

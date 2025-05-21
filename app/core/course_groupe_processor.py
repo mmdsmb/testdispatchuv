@@ -36,7 +36,8 @@ class CourseGroupeProcessor:
     async def _get_geocode(self, address: str) -> Optional[Dict[str, float]]:
         """Obtient les coordonnées GPS d'une adresse (version asynchrone avec httpx)"""
         GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-        
+        print(f"Adresse à géocoder: {address}")
+        print(f"API Key: {self.api_key}")
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -544,6 +545,7 @@ class CourseGroupeProcessor:
                             'lng': dest_lng,
                             'distance_km': distance
                         }
+                        
 
                 # Créer le groupe avec les nouvelles données
                 groupe_id = await self._create_groupe(

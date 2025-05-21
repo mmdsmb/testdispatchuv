@@ -476,12 +476,18 @@ class CourseProcessor:
         JOUR_FIN_EVENEMENT = settings.JOUR_FIN_EVENEMENT
         ADRESSE_SALLE = settings.ADRESSE_SALLE.lower()
 
+        print(f"JOUR_FIN_EVENEMENT: {JOUR_FIN_EVENEMENT}")
+
         """Génère les courses retour"""
         courses = []
         for _, row in df.iterrows():
             if pd.notnull(row['Retour-date']) and (pd.isnull(row['erreur_retour']) or row['erreur_retour'] == ''):
                 course = self._generate_base_course(row, 'retour')
                 # Convertir la date de retour en datetime pour comparaison
+                #print(f"Prenom-Nom: {row['Prenom-Nom']}")
+                #print(f"Retour-date: {row['Retour-date']}")
+
+               
                 retour_date = pd.to_datetime(row['Retour-date']).strftime('%Y-%m-%d')
                 if retour_date == JOUR_FIN_EVENEMENT:
                     course.update({
