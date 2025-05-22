@@ -36,8 +36,8 @@ class CourseGroupeProcessor:
     async def _get_geocode(self, address: str) -> Optional[Dict[str, float]]:
         """Obtient les coordonnées GPS d'une adresse (version asynchrone avec httpx)"""
         GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-        #print(f"Adresse à géocoder: {address}")
-        #print(f"API Key: {self.api_key}")
+        print(f"Adresse à géocoder: {address}")
+        print(f"API Key: {self.api_key}")
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -70,7 +70,6 @@ class CourseGroupeProcessor:
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         c = 2 * atan2(sqrt(a), sqrt(1-a))
 
-        #print(f"Distance calculée: {R * c} km")
         return round(R * c, 2)
 
     async def _get_route_details(self, origin: str, destination: str) -> Optional[Dict]:
@@ -197,15 +196,11 @@ class CourseGroupeProcessor:
                 (hash_destination, groupe['destination'], dest_coords['lat'], dest_coords['lng'])
             )])
 
-            ##print("pickup_coords:", pickup_coords)
             # Calculer la distance à vol d'oiseau
             distance_vol_oiseau = self._calculate_distance(
                 pickup_coords['lat'], pickup_coords['lng'],
                 dest_coords['lat'], dest_coords['lng']
             )
-
-
-            #print(f"Distance à vol d'oiseau: {distance_vol_oiseau} km")
 
             # Obtenir les détails du trajet
             route_details = await self._get_route_details(
@@ -233,7 +228,6 @@ class CourseGroupeProcessor:
                 'points_passage_coords': route_details['waypoints_coords']
             }
 
-            #print(f"Données de la course: {course_data}")
             # Sauvegarder les calculs
             await self._save_course_calcul(course_data)
             
@@ -395,7 +389,6 @@ class CourseGroupeProcessor:
             LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
             LEFT JOIN adresseGps ag1 ON c.hash_lieu_prise_en_charge = ag1.hash_address
             LEFT JOIN adresseGps ag2 ON c.hash_destination = ag2.hash_address
-            
         """
         
         where_clauses = []
@@ -544,7 +537,6 @@ class CourseGroupeProcessor:
                     dest_lat = dest_row['destination_lat']
                     dest_lng = dest_row['destination_lng']
                     distance = self._calculate_distance(origine_lat, origine_lng, dest_lat, dest_lng)
-                    #print(f"Distance entre {first_row['lieu_prise_en_charge']} et {dest}: {distance} km")
                     if distance > max_distance:
                         max_distance = distance
                         destination_eloignee = {
@@ -609,8 +601,6 @@ class CourseGroupeProcessor:
             }
         }, ensure_ascii=False)
 
-        #print(f"destination_json: {destination_json}")
-
         params = (
             row['date_heure_prise_en_charge'],
             row['nombre_personne'],
@@ -627,8 +617,6 @@ class CourseGroupeProcessor:
             row['date_heure_prise_en_charge'],
             row['hash_route']
         )
-
-        #print(f"Params: {params}")
         
         result = await self.ds.execute_transaction([(query, params)])
         groupe_id = result[0][0]
@@ -704,101 +692,3 @@ class CourseGroupeProcessor:
         except Exception as e:
             logger.error(f"Erreur lors de l'export des groupes: {str(e)}")
             raise 
-                # ...existing code...
-        
-    async def create_groupe_from_courses(self, course_ids: list[int]) -> Optional[int]:
-        """
-        Crée un groupe de courses à partir d'une ou plusieurs courses (pas d'upsert).
-        Args:
-            course_ids (list[int]): Liste des identifiants de courses à grouper.
-        Returns:
-            int: L'identifiant du groupe créé, ou None en cas d'échec.
-        """
-        if not course_ids:
-            logger.error("Aucun identifiant de course fourni")
-            return None
-
-        # Récupérer les infos des courses
-        placeholders = ','.join(['%s'] * len(course_ids))
-        query = f"""
-            SELECT * FROM course WHERE course_id IN ({placeholders})
-        """
-        courses = await self.ds.fetch_all(query, course_ids)
-        if not courses:
-            logger.error("Aucune course trouvée pour les IDs fournis")
-            return None
-
-        # Agrégation des infos principales
-        df = pd.DataFrame(courses)
-        is_vip = df['vip'].any()
-        date_heure_prise_en_charge = df['date_heure_prise_en_charge'].min()
-        nombre_personne = df['nombre_personne'].sum()
-        lieux_prise = df['lieu_prise_en_charge'].unique().tolist()
-        destinations = df['destination'].unique().tolist()
-        hash_lieu_prise = df['hash_lieu_prise_en_charge'].iloc[0]
-        hash_destination = df['hash_destination'].iloc[0]
-        hash_route = df['hash_route'].iloc[0] if 'hash_route' in df else None
-
-        # Prendre la première course comme référence pour les champs courts
-        row = df.iloc[0]
-        lieu_prise_json = json.dumps({
-            'liste': lieux_prise,
-            'coordonnees': {
-                'lat': row.get('lieu_prise_en_charge_lat'),
-                'lng': row.get('lieu_prise_en_charge_lng')
-            }
-        }, ensure_ascii=False)
-        destination_json = json.dumps({
-            'liste': destinations,
-            'plus_eloignee': {
-                'address': row.get('destination'),
-                'lat': row.get('destination_lat'),
-                'lng': row.get('destination_lng'),
-                'distance_km': row.get('distance_vol_oiseau_km')
-            }
-        }, ensure_ascii=False)
-
-        params = (
-            date_heure_prise_en_charge,
-            nombre_personne,
-            is_vip,
-            row['lieu_prise_en_charge'],
-            row['destination'],
-            row.get('lieu_prise_en_charge_court', ''),
-            row.get('destination_court', ''),
-            lieu_prise_json,
-            destination_json,
-            json.dumps({'window': date_heure_prise_en_charge.isoformat()}),
-            hash_lieu_prise,
-            hash_destination,
-            date_heure_prise_en_charge,
-            hash_route
-        )
-
-        insert_query = """
-            INSERT INTO courseGroupe (
-                date_heure_prise_en_charge, nombre_personne, vip,
-                lieu_prise_en_charge, destination,
-                lieu_prise_en_charge_court, destination_court,
-                lieu_prise_en_charge_json, destination_json,
-                date_heure_prise_en_charge_json,
-                hash_lieu_prise_en_charge, hash_destination,
-                date_time_window, hash_route
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            ) RETURNING groupe_id
-        """
-        result = await self.ds.execute_transaction([(insert_query, params)])
-        groupe_id = result[0][0]
-
-        # Mise à jour des courses avec le groupe_id
-        update_query = """
-            UPDATE course SET groupe_id = %s WHERE course_id = %s
-        """
-        await self.ds.execute_transaction([
-            (update_query, (groupe_id, cid)) for cid in course_ids
-        ])
-
-        logger.info(f"Groupe {groupe_id} créé pour les courses {course_ids}")
-        return groupe_id
-
