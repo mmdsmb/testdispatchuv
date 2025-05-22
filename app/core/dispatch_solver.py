@@ -14,9 +14,14 @@ import httpx
 import hashlib
 from typing import Tuple, Optional, List, Dict, Any
 from app.core.geocoding import geocoding_service
-from app.core.utils import generate_address_hash
+from app.core.utils import generate_address_hash, save_and_upload_to_drive
 from decimal import Decimal  # Ensure this import exists at the top of the file
 import json
+from app.core.chauffeur_processor import ChauffeurProcessor
+from app.core.course_groupe_processor import CourseGroupeProcessor  
+from app.core.config import settings
+from app.core.geocoding import geocoding_service
+
 
 # Configuration du logging
 logging.basicConfig(
@@ -26,87 +31,6 @@ logging.basicConfig(
     filemode='w'
 )
 logger = logging.getLogger(__name__)
-
-
-# # =============================================================================
-# # Résolution initiale par MILP avec time_limit de 5 minutes (300s)
-# # =============================================================================
-
-# milp_time_limit = 300  # 5 minutes
-# prob, result_status, x, y = solve_MILP(groupes, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-# milp_solution_optimal = (pulp.LpStatus[result_status] == "Optimal")
-# print("Statut MILP initial :", pulp.LpStatus[result_status])
-# print("Valeur fonction objectif MILP initiale :", pulp.value(prob.objective))
-
-# milp_assignments = extract_assignments(groupes, chauffeurs, x, y)
-
-# # Si la solution MILP n'est pas optimale, lancer le recuit simulé
-# if not milp_solution_optimal:
-#     print("La solution MILP n'est pas optimale après 5 minutes. Lancement du recuit simulé...")
-#     recuit_assignments = heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost)
-# else:
-#     recuit_assignments = milp_assignments
-
-# non_couverts = groupes_non_couverts(recuit_assignments, groupes)
-
-# if non_couverts:
-#     print("Certains groupes ne sont pas couverts. Traitement spécifique des groupes non couverts...")
-#     # Première tentative via MILP uniquement pour les groupes non couverts
-#     prob_nc, result_status_nc, x_nc, y_nc = solve_MILP(non_couverts, chauffeurs, solo_cost, combo_cost, milp_time_limit)
-#     nc_milp_optimal = (pulp.LpStatus[result_status_nc] == "Optimal")
-#     nc_assignments = extract_assignments(non_couverts, chauffeurs, x_nc, y_nc)
-#     # Pour les groupes non couverts par le MILP, appliquer le recuit simulé
-#     if not nc_milp_optimal:
-#         print("La solution MILP pour les groupes non couverts n'est pas optimale. Lancement du recuit simulé pour ces groupes...")
-#         nc_assignments = heuristic_solution(non_couverts, chauffeurs, solo_cost, combo_cost)
-#     # Fusionner les affectations
-#     for g in non_couverts:
-#         recuit_assignments.setdefault(g['id'], [])
-#         if g['id'] in nc_assignments:
-#             recuit_assignments[g['id']].extend(nc_assignments[g['id']])
-# else:
-#     print("Tous les groupes sont couverts.")
-
-# rows = []
-# for g in groupes:
-#     row = {
-#         "group_id": g['id'],
-#         "N": g['ng'],
-#         "pickup_date": g['pickup_date'],
-#         "pickup_time": g['t'],
-#         "duree_trajet_min": g['duree_trajet_min'],
-#         "lieu_prise_en_charge": g.get("pickup_address", ""),
-#         "destination": g.get("dropoff_address", "")
-#     }
-#     aff_list = recuit_assignments.get(g['id'], [])
-
-#     for i in range(20):  # Support pour jusqu'à 20 chauffeurs
-#         if i < len(aff_list):
-#             a = aff_list[i]
-#             ch = next((ch for ch in chauffeurs if ch['id'] == a["chauffeur"]), {})
-#             row[f"chauffeur_{i+1}_id"] = ch.get('id', '')
-#             row[f"chauffeur_{i+1}_nom_prenom"] = ch.get('prenom_nom', '')
-#             row[f"chauffeur_{i+1}_trajet"] = a["trajet"]
-#             row[f"chauffeur_{i+1}_n"] = ch.get('n', '')
-#             # Ajouter les nouvelles informations de combinaison
-#             row[f"chauffeur_{i+1}_combo_id"] = a.get("combo_id", '')
-#             row[f"chauffeur_{i+1}_combiné_avec"] = ','.join(map(str, a.get("combiné_avec", [])))
-#         else:
-#             row[f"chauffeur_{i+1}_id"] = ''
-#             row[f"chauffeur_{i+1}_nom_prenom"] = ''
-#             row[f"chauffeur_{i+1}_trajet"] = ''
-#             row[f"chauffeur_{i+1}_n"] = ''
-#             row[f"chauffeur_{i+1}_combo_id"] = ''
-#             row[f"chauffeur_{i+1}_combiné_avec"] = ''
-
-#     rows.append(row)
-
-# df_output = pd.DataFrame(rows)
-# output_csv = "affectations_groupes_chauffeurs_final.csv"
-# df_output.to_csv(output_csv, index=False)
-# print(f"Le fichier CSV '{output_csv}' a été généré avec les noms des chauffeurs, lieu de prise en charge et destination.")
-# print(df_output)
-
 
 
 # =============================================================================
@@ -193,24 +117,6 @@ def combined_route_cost(chauffeur, g1, g2):
 
 async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
     """Récupère les courses avec calcul des distances en Python (sans SQL geodesic)"""
-    # query = """
-    #     SELECT 
-    #         c.course_id as id,
-    #         c.nombre_personne as ng,
-    #         c.lieu_prise_en_charge as pickup_address,
-    #         c.destination as dropoff_address,
-    #         ag_pickup.latitude as lat_pickup,
-    #         ag_pickup.longitude as long_pickup,
-    #         ag_dest.latitude as dest_lat,
-    #         ag_dest.longitude as dest_lng,
-    #         c.date_heure_prise_en_charge,
-    #         EXTRACT(EPOCH FROM (c.date_heure_prise_en_charge - NOW()))/60 as t_min,
-    #         cc.duree_trajet_min
-    #     FROM course c
-    #     JOIN adresseGps ag_pickup ON c.hash_lieu_prise_en_charge = ag_pickup.hash_address
-    #     JOIN adresseGps ag_dest ON c.hash_destination = ag_dest.hash_address
-    #     LEFT JOIN coursecalcul cc ON c.hash_route = cc.hash_route
-    # """
     query = """
         SELECT 
             c.groupe_id as id,
@@ -242,7 +148,8 @@ async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = N
     } if date_begin or date_end else {})
     
     if not rows:
-        raise ValueError("Aucune course valide après vérification des coordonnées")
+        logger.info("Aucune course valide après vérification des coordonnées (prepare_demandes)")
+        return []
     
     # Conversion en list[dict] et calcul des durées manquantes
     demandes = []
@@ -264,24 +171,101 @@ async def prepare_demandes(ds: PostgresDataSource, date_begin: Optional[str] = N
     
     return demandes
 
-async def prepare_chauffeurs(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
-    """Récupère et prépare les chauffeurs disponibles pour une période donnée"""
+async def prepare_chauffeurs(
+    ds: PostgresDataSource, 
+    date_begin: Optional[str] = None, 
+    date_end: Optional[str] = None,
+    use_salle_address: bool = False
+):
+    """
+    Récupère et prépare les chauffeurs disponibles pour une période donnée
+    
+    Args:
+        ds: Source de données PostgreSQL
+        date_begin: Date de début de disponibilité (optionnel)
+        date_end: Date de fin de disponibilité (optionnel)
+        use_salle_address: Si True, utilise l'adresse de la salle pour tous les chauffeurs
+    """
+    # Si use_salle_address est True, on récupère d'abord l'adresse de la salle
+    salle_coords = None
+    if use_salle_address:
+        # Requête pour vérifier l'existence de l'adresse (insensible à la casse et aux espaces)
+        salle_query = """
+            SELECT hash_address, latitude, longitude 
+            FROM adresseGps 
+            WHERE LOWER(TRIM(address)) = LOWER(TRIM(%(adresse_salle)s))
+            LIMIT 1
+        """
+        salle_result = await ds.fetch_all(salle_query, {"adresse_salle": settings.ADRESSE_SALLE})
+        
+        if not salle_result:
+            logger.info(f"Adresse de la salle non trouvée, création d'une nouvelle entrée...")
+            
+            # Générer le hash de l'adresse
+            hash_adresse = generate_address_hash(settings.ADRESSE_SALLE)
+            
+            # Géocoder l'adresse pour obtenir les coordonnées
+            geocode_result = await geocode_address(settings.ADRESSE_SALLE)
+            
+            if not geocode_result:
+                logger.error(f"Échec du géocodage pour l'adresse de la salle: {settings.ADRESSE_SALLE}")
+                return []
+            
+            # Insérer la nouvelle adresse dans adresseGps
+            insert_query = """
+                INSERT INTO adresseGps (hash_address, address, latitude, longitude)
+                VALUES (%(hash)s, %(adresse)s, %(lat)s, %(long)s)
+                RETURNING hash_address, latitude, longitude
+            """
+            insert_params = {
+                "hash": hash_adresse,
+                "adresse": settings.ADRESSE_SALLE.strip(),
+                "lat": geocode_result[0],
+                "long": geocode_result[1]
+            }
+            
+            try:
+                salle_result = await ds.fetch_all(insert_query, insert_params)
+                salle_coords = salle_result[0]
+                logger.info(f"Nouvelle adresse de salle ajoutée : {settings.ADRESSE_SALLE}")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'insertion de l'adresse de la salle : {str(e)}")
+                return []
+        else:
+            salle_coords = salle_result[0]
+
+    # Requête principale pour les chauffeurs
     query = """
         SELECT 
             c.chauffeur_id as id,
             c.nombre_place as n,
             c.prenom_nom,
-            ag.latitude as lat_chauff,
-            ag.longitude as long_chauff,
+            CASE 
+                WHEN %(use_salle)s = true THEN %(salle_lat)s
+                ELSE ag.latitude 
+            END as lat_chauff,
+            CASE 
+                WHEN %(use_salle)s = true THEN %(salle_long)s
+                ELSE ag.longitude 
+            END as long_chauff,
             dc.date_debut as availability_date,
-            dc.date_fin as availability_date_end
+            dc.date_fin as availability_date_end,
+            CASE 
+                WHEN %(use_salle)s = true THEN %(salle_hash)s
+                ELSE c.hash_adresse 
+            END as hash_adresse
         FROM chauffeur c
         JOIN dispoChauffeur dc ON c.chauffeur_id = dc.chauffeur_id
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
         WHERE c.actif = true
     """
 
-    params = {}
+    params = {
+        "use_salle": use_salle_address,
+        "salle_lat": salle_coords["latitude"] if salle_coords else None,
+        "salle_long": salle_coords["longitude"] if salle_coords else None,
+        "salle_hash": salle_coords["hash_address"] if salle_coords else None
+    }
     
     if date_begin and date_end:
         query += " AND dc.date_debut <= %(date_end)s AND dc.date_fin >= %(date_begin)s"
@@ -292,7 +276,10 @@ async def prepare_chauffeurs(ds: PostgresDataSource, date_begin: Optional[str] =
     elif date_end:
         query += " AND dc.date_debut <= %(date_end)s"
         params.update({"date_end": date_end})
-
+        
+    #print(query)
+    #print(params)
+    
     rows = await ds.fetch_all(query, params)
     
     if not rows:
@@ -301,10 +288,52 @@ async def prepare_chauffeurs(ds: PostgresDataSource, date_begin: Optional[str] =
         
     # Convertir les rows en list[dict] si ce n'est pas déjà le cas
     if isinstance(rows, list) and len(rows) > 0 and not isinstance(rows[0], dict):
-        columns = ['id', 'n', 'prenom_nom', 'lat_chauff', 'long_chauff', 'availability_date', 'availability_date_end']
+        columns = ['id', 'n', 'prenom_nom', 'lat_chauff', 'long_chauff', 
+                  'availability_date', 'availability_date_end', 'hash_adresse']
         rows = [dict(zip(columns, row)) for row in rows]
     
     return rows
+# async def prepare_chauffeurs(ds: PostgresDataSource, date_begin: Optional[str] = None, date_end: Optional[str] = None):
+#     """Récupère et prépare les chauffeurs disponibles pour une période donnée"""
+#     query = """
+#         SELECT 
+#             c.chauffeur_id as id,
+#             c.nombre_place as n,
+#             c.prenom_nom,
+#             ag.latitude as lat_chauff,
+#             ag.longitude as long_chauff,
+#             dc.date_debut as availability_date,
+#             dc.date_fin as availability_date_end
+#         FROM chauffeur c
+#         JOIN dispoChauffeur dc ON c.chauffeur_id = dc.chauffeur_id
+#         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
+#         WHERE c.actif = true
+#     """
+
+#     params = {}
+    
+#     if date_begin and date_end:
+#         query += " AND dc.date_debut <= %(date_end)s AND dc.date_fin >= %(date_begin)s"
+#         params.update({"date_begin": date_begin, "date_end": date_end})
+#     elif date_begin:
+#         query += " AND dc.date_fin >= %(date_begin)s"
+#         params.update({"date_begin": date_begin})
+#     elif date_end:
+#         query += " AND dc.date_debut <= %(date_end)s"
+#         params.update({"date_end": date_end})
+
+#     rows = await ds.fetch_all(query, params)
+    
+#     if not rows:
+#         logger.warning("Aucun chauffeur disponible pour la période spécifiée")
+#         return []
+        
+#     # Convertir les rows en list[dict] si ce n'est pas déjà le cas
+#     if isinstance(rows, list) and len(rows) > 0 and not isinstance(rows[0], dict):
+#         columns = ['id', 'n', 'prenom_nom', 'lat_chauff', 'long_chauff', 'availability_date', 'availability_date_end']
+#         rows = [dict(zip(columns, row)) for row in rows]
+    
+#     return rows
 
 # =============================================================================
 # Précalcul des coûts pour améliorer la performance
@@ -422,24 +451,6 @@ def heuristic_solution(groupes, chauffeurs, solo_cost, combo_cost, existing=None
         raise
 
 
-# def extract_assignments(groupes, chauffeurs, x, y):
-    
-#     logger.info("Extracting group-driver assignments")
-
-#     assign={}
-#     for g in groupes:
-#         for c in chauffeurs:
-#             if (g['id'],c['id']) in x and pulp.value(x[(g['id'],c['id'])])>0.5:
-#                 assign.setdefault(g['id'],[]).append({"chauffeur":c['id'],"trajet":"simple"})
-#     for (g1,g2,c),v in y.items():
-#         if pulp.value(v)>0.5:
-#             assign.setdefault(g1,[]).append({"chauffeur":c,"trajet":"combiné"})
-#             assign.setdefault(g2,[]).append({"chauffeur":c,"trajet":"combiné"})
-    
-#     logger.info(f" assignments found: {assign}")
-
-#     return assign
-
 def extract_assignments(groupes, chauffeurs, x, y):
     logger.info("Extracting group-driver assignments")
     assignments = {}
@@ -521,7 +532,8 @@ async def solve_dispatch_problem(
     ds: PostgresDataSource, 
     date_begin: Optional[str] = None,
     date_end: Optional[str] = None,
-    milp_time_limit: int = 300  # Paramètre configurable pour le timeout MILP
+    milp_time_limit: int = 300,  # Paramètre configurable pour le timeout MILP
+    use_salle_address: bool = False
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Résout le problème de dispatch en utilisant d'abord MILP, puis recuit simulé si nécessaire.
@@ -530,13 +542,25 @@ async def solve_dispatch_problem(
     logger.info("=== DÉBUT DU DISPATCH ===")
     logger.info(f"Paramètres - Date début: {date_begin}, Date fin: {date_end}, Timeout MILP: {milp_time_limit}s")
     
+    # Configurer l'export
+    FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+    if not FOLDER_ID:
+        logger.error("GOOGLE_DRIVE_FOLDER_ID non trouvé dans le fichier .env Configuration Google Drive manquante")
+    
+    
     try:
         # 1. Récupération des données
         logger.info("Étape 1/4: Récupération des données...")
         groupes = await prepare_demandes(ds, date_begin, date_end)
+        if not groupes:
+            logger.info("Aucun groupe de courses valide à dispatcher. Dispatch non lancé.")
+            return {}
         logger.info(f"→ {len(groupes)} groupes à traiter récupérés")
         
-        chauffeurs = await prepare_chauffeurs(ds, date_begin, date_end)
+        chauffeurs = await prepare_chauffeurs(ds, date_begin, date_end, use_salle_address)
+        if not chauffeurs:
+            logger.info("Aucun chauffeur disponible pour la période spécifiée. Dispatch non lancé.")
+            return {}
         logger.info(f"→ {len(chauffeurs)} chauffeurs disponibles récupérés")
 
         # 2. Calcul des coûts
@@ -601,10 +625,36 @@ async def solve_dispatch_problem(
                     if (g['id'],c['id']) in solo_cost and not(g['ng']<=4 and c['n']>4):
                         assign[g['id']].append({"chauffeur":c['id'],"trajet":"simple"})
                         rem -= c['n']
+        
+        
+        try:
+            logger.info("Génération et téléchargement des rapports from_calculation...")
+            file_id_avant = await generate_and_upload_affectation_reports_from_calculation(
+                groupes=groupes,
+                assignments=assign,
+                chauffeurs=chauffeurs,
+
+                folder_id=FOLDER_ID
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération et du téléchargement des rapports from_calculation: {str(e)}")
+            
 
         # 5. Sauvegarde
         logger.info("Sauvegarde des affectations...")
         await save_affectations(ds, assign)
+        
+        try:
+            logger.info("Génération et téléchargement des rapports from_db...")
+            file_id_apres = await generate_and_upload_affectation_reports_from_db(
+                date_begin=date_begin,
+                date_end=date_end,
+                ds=ds,
+                folder_id=FOLDER_ID
+            )   
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération et du téléchargement des rapports from_db: {str(e)}")
+            
 
         duration = time.perf_counter() - start_time
         logger.info(f"=== DISPATCH TERMINÉ AVEC SUCCÈS ===")
@@ -779,6 +829,57 @@ async def save_affectations(ds: PostgresDataSource, assignments):
         logger.error(f"Erreur lors de la sauvegarde des affectations: {str(e)}")
         raise
 
+
+
+# async def save_affectations(ds: PostgresDataSource, assignments):
+#     """Sauvegarde les affectations dans la table chauffeurAffectation et met à jour les champs calculés"""
+#     try:
+#         # 1. Sauvegarde des affectations dans chauffeurAffectation
+#         chauffeur_affectation_query = """
+#             INSERT INTO chauffeurAffectation (
+#                 groupe_id, chauffeur_id, statut_affectation, date_created,
+#                 combiner_avec_groupe_id, course_combinee_id
+#             ) VALUES (
+#                 %(groupe_id)s, %(chauffeur_id)s, %(statut)s, NOW(),
+#                 %(combiner_avec_groupe_id)s, %(course_combinee_id)s
+#             )
+#             ON CONFLICT (groupe_id, chauffeur_id) DO UPDATE
+#             SET 
+#                 statut_affectation = EXCLUDED.statut_affectation,
+#                 combiner_avec_groupe_id = EXCLUDED.combiner_avec_groupe_id,
+#                 course_combinee_id = EXCLUDED.course_combinee_id
+#         """
+
+#         # 2. Traitement des affectations
+#         for groupe_id, affectations in assignments.items():
+#             for affectation in affectations:
+#                 chauffeur_id = affectation.get('chauffeur')
+#                 if not chauffeur_id:
+#                     continue
+
+#                 # Récupérer les informations de combinaison depuis l'objet assignments
+#                 combiner_avec_groupe_id = None
+#                 course_combinee_id = None
+#                 if 'combiné_avec' in affectation and affectation['combiné_avec']:
+#                     combiner_avec_groupe_id = ",".join(map(str, affectation['combiné_avec']))
+#                 if 'combo_id' in affectation:
+#                     course_combinee_id = affectation['combo_id']
+
+#                 await ds.execute_transaction([(chauffeur_affectation_query, {
+#                     "groupe_id": groupe_id,
+#                     "chauffeur_id": chauffeur_id,
+#                     "statut": "draft",
+#                     "combiner_avec_groupe_id": combiner_avec_groupe_id,
+#                     "course_combinee_id": course_combinee_id
+#                 })])
+
+#         # 3. Mise à jour des champs calculés dans chauffeurAffectation
+#         await update_driver_assignment_metadata(ds, list(assignments.keys()))
+
+#     except Exception as e:
+#         logger.error(f"Erreur lors de la sauvegarde des affectations: {str(e)}")
+#         raise
+
 async def verify_and_complete_coordinates(ds: PostgresDataSource):
     """Version utilisant uniquement le service de géocodage"""
     errors = []
@@ -810,15 +911,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                 
             hash_addr = generate_address_hash(full_address)
             
-            await ds.execute_transaction([(
-                """
+            await ds.execute_transaction([
+                ("""
                 INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (hash_address) DO UPDATE
                 SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                 """,
-                (hash_addr, full_address, lat, lng)
-            )])
+                (hash_addr, full_address, lat, lng))
+            ])
             
             await ds.execute_query("""
                 UPDATE chauffeur SET hash_adresse = %s WHERE chauffeur_id = %s
@@ -854,15 +955,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                     raise ValueError("Échec géocodage lieu de prise en charge")
                     
                 hash_addr = generate_address_hash(pickup_addr)
-                await ds.execute_transaction([(
-                    """
+                await ds.execute_transaction([
+                    ("""
                     INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (hash_address) DO UPDATE
                     SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                     """,
-                    (hash_addr, pickup_addr, lat, lng)
-                )])
+                    (hash_addr, pickup_addr, lat, lng))
+                ])
                 await ds.execute_query("""
                     UPDATE course SET hash_lieu_prise_en_charge = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
@@ -874,15 +975,15 @@ async def verify_and_complete_coordinates(ds: PostgresDataSource):
                     raise ValueError("Échec géocodage destination")
                     
                 hash_addr = generate_address_hash(dest_addr)
-                await ds.execute_transaction([(
-                    """
+                await ds.execute_transaction([
+                    ("""
                     INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (hash_address) DO UPDATE
                     SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
                     """,
-                    (hash_addr, dest_addr, lat, lng)
-                )])
+                    (hash_addr, dest_addr, lat, lng))
+                ])
                 await ds.execute_query("""
                     UPDATE course SET hash_destination = %s WHERE course_id = %s
                 """, [hash_addr, course_id])
@@ -949,12 +1050,15 @@ async def group_courses(ds: PostgresDataSource):
                 pickup_coords = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
                 if pickup_coords:
                     lat, lng = pickup_coords  # Déballage du tuple
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (hash_address) DO UPDATE
                         SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-                    """, (hash_prise_en_charge, course['lieu_prise_en_charge'], lat, lng))])
+                        """,
+                        (hash_prise_en_charge, course['lieu_prise_en_charge'], lat, lng))
+                    ])
                     course['hash_lieu_prise_en_charge'] = hash_prise_en_charge
 
             if not course['destination_exists']:
@@ -963,12 +1067,15 @@ async def group_courses(ds: PostgresDataSource):
                 dest_coords = await geocoding_service.get_coordinates(course['destination'])
                 if dest_coords:
                     lat, lng = dest_coords  # Déballage du tuple
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO adresseGps (hash_address, address, latitude, longitude)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (hash_address) DO UPDATE
                         SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-                    """, (hash_destination, course['destination'], lat, lng))])
+                        """,
+                        (hash_destination, course['destination'], lat, lng))
+                    ])
                     course['hash_destination'] = hash_destination
 
             # Créer le hash de route si nécessaire
@@ -983,7 +1090,8 @@ async def group_courses(ds: PostgresDataSource):
                     pickup_lat, pickup_lng = await geocoding_service.get_coordinates(course['lieu_prise_en_charge'])
                     dest_lat, dest_lng = await geocoding_service.get_coordinates(course['destination'])
                     
-                    await ds.execute_transaction([("""
+                    await ds.execute_transaction([
+                        ("""
                         INSERT INTO coursecalcul (
                             hash_route, lieu_prise_en_charge, destination,
                             lieu_prise_en_charge_lat, lieu_prise_en_charge_lng,
@@ -1004,21 +1112,21 @@ async def group_courses(ds: PostgresDataSource):
                             duree_trajet_secondes = EXCLUDED.duree_trajet_secondes,
                             points_passage = EXCLUDED.points_passage,
                             points_passage_coords = EXCLUDED.points_passage_coords
-                    """, {
-                        'hash_route': hash_route,
-                        'lieu_prise_en_charge': course['lieu_prise_en_charge'],
-                        'destination': course['destination'],
-                        'lieu_prise_en_charge_lat': pickup_lat,
-                        'lieu_prise_en_charge_lng': pickup_lng,
-                        'destination_lat': dest_lat,
-                        'destination_lng': dest_lng,
-                        'distance_vol_oiseau_km': route_details['distance_vol_oiseau_km'],
-                        'distance_routiere_km': route_details['distance_routiere_km'],
-                        'duree_trajet_min': route_details['duree_trajet_min'],
-                        'duree_trajet_secondes': route_details['duree_trajet_secondes'],
-                        'points_passage': route_details['points_passage'],
-                        'points_passage_coords': route_details['points_passage_coords']
-                    })])
+                        """, {
+                            'hash_route': hash_route,
+                            'lieu_prise_en_charge': course['lieu_prise_en_charge'],
+                            'destination': course['destination'],
+                            'lieu_prise_en_charge_lat': pickup_lat,
+                            'lieu_prise_en_charge_lng': pickup_lng,
+                            'destination_lat': dest_lat,
+                            'destination_lng': dest_lng,
+                            'distance_vol_oiseau_km': route_details['distance_vol_oiseau_km'],
+                            'distance_routiere_km': route_details['distance_routiere_km'],
+                            'duree_trajet_min': route_details['duree_trajet_min'],
+                            'duree_trajet_secondes': route_details['duree_trajet_secondes'],
+                            'points_passage': route_details['points_passage'],
+                            'points_passage_coords': route_details['points_passage_coords']
+                        })])
                     course['hash_route'] = hash_route
 
         # 3. Créer un dictionnaire pour stocker les groupes
@@ -1065,7 +1173,8 @@ async def group_courses(ds: PostgresDataSource):
             )
 
             # Insérer le groupe
-            groupe_id = await ds.execute_transaction([("""
+            groupe_id = await ds.execute_transaction([
+                ("""
                 INSERT INTO courseGroupe (
                     lieu_prise_en_charge,
                     destination,
@@ -1091,27 +1200,29 @@ async def group_courses(ds: PostgresDataSource):
                     %(hash_lieu_prise_en_charge)s,
                     %(hash_destination)s
                 ) RETURNING groupe_id
-            """, {
-                'lieu_prise_en_charge': group_key[0],
-                'destination': group_key[1],
-                'date_heure_prise_en_charge': group_key[2],
-                'nombre_personne': group_data['total_personnes'],
-                'vip': group_data['vip'],
-                'lieu_prise_en_charge_json': lieu_prise_en_charge_json,
-                'destination_json': destination_json,
-                'date_heure_prise_en_charge_json': date_heure_prise_en_charge_json,
-                'hash_route': group_data['hash_route'],
-                'hash_lieu_prise_en_charge': group_data['hash_lieu_prise_en_charge'],
-                'hash_destination': group_data['hash_destination']
-            })])
+                """, {
+                    'lieu_prise_en_charge': group_key[0],
+                    'destination': group_key[1],
+                    'date_heure_prise_en_charge': group_key[2],
+                    'nombre_personne': group_data['total_personnes'],
+                    'vip': group_data['vip'],
+                    'lieu_prise_en_charge_json': lieu_prise_en_charge_json,
+                    'destination_json': destination_json,
+                    'date_heure_prise_en_charge_json': date_heure_prise_en_charge_json,
+                    'hash_route': group_data['hash_route'],
+                    'hash_lieu_prise_en_charge': group_data['hash_lieu_prise_en_charge'],
+                    'hash_destination': group_data['hash_destination']
+                })])
 
             # Mettre à jour les courses
             course_ids_str = ",".join(str(course_id) for course_id in group_data['course_ids'])
-            await ds.execute_transaction([("""
+            await ds.execute_transaction([
+                ("""
                 UPDATE course
                 SET groupe_id = %s
                 WHERE course_id = ANY(STRING_TO_ARRAY(%s, ',')::bigint[])
-            """, (groupe_id[0][0], course_ids_str))])
+                """, (groupe_id[0][0], course_ids_str))
+            ])
 
         logger.info(f"Groupage terminé : {len(groups)} groupes créés ou mis à jour")
 
@@ -1119,3 +1230,573 @@ async def group_courses(ds: PostgresDataSource):
         logger.error(f"Erreur lors du groupage des courses : {str(e)}")
         raise
 
+async def process_course_group(processor, groupe_ids):
+    """Traite un groupe de courses (mise à jour coursecalcul)"""
+    for groupe_id in groupe_ids:
+        try:
+            await processor.process_course_groupe(groupe_id)
+            logger.info(f"Groupe {groupe_id} traité avec succès")
+        except Exception as e:
+            logger.error(f"Erreur traitement groupe {groupe_id}: {str(e)}")
+
+async def run_dispatch_solver_orchestration(
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
+    milp_time_limit: int = 300,
+    use_salle_address: bool = False
+):
+    """Orchestration complète du calcul des groupes et du dispatch (mise à jour coursecalcul puis solveur)"""
+
+    ds = PostgresDataSource()
+    try:
+        # 1. Traiter les adresses des chauffeurs
+        chauffeur_processor = ChauffeurProcessor(ds)
+        await chauffeur_processor.process_chauffeur_addresses()
+        
+        # 2. Traiter les adresses des coursesgroupes et calculs de routes
+        processor = CourseGroupeProcessor(ds)
+        groupes = await ds.fetch_all("""
+            SELECT cg.groupe_id
+            FROM courseGroupe cg
+            LEFT JOIN coursecalcul cc ON cg.hash_route = cc.hash_route
+            WHERE cg.hash_route IS NULL OR cg.hash_route = ''
+            OR cc.duree_trajet_min IS NULL OR cc.distance_routiere_km IS NULL
+            OR cc.points_passage_coords IS NULL OR cc.distance_vol_oiseau_km IS NULL
+            OR cc.duree_trajet_secondes IS NULL OR cc.points_passage IS NULL
+        """)
+        logger.info(f"Nombre de groupes à traiter: {len(groupes)}")
+        if not groupes:
+            logger.info("Aucun groupe calcul de rouep à traiter Table : courseCalcul")
+            
+
+        groupe_ids = [groupe['groupe_id'] for groupe in groupes]
+        await process_course_group(processor, groupe_ids)
+        logger.info("Début du processus de dispatch...")
+        assignments = await solve_dispatch_problem(ds, date_begin, date_end, milp_time_limit, use_salle_address)
+        logger.info(f"Dispatch terminé avec {len(assignments)} affectations")
+        return assignments
+    except Exception as e:
+        logger.error(f"Échec critique: {str(e)}", exc_info=True)
+        raise
+    finally:
+        await ds.close()
+
+async def generate_and_upload_affectation_reports_from_calculation(
+    groupes: List[Dict],
+    assignments: Dict,
+    chauffeurs: List[Dict],
+    folder_id: str
+) -> Tuple[str, str]:
+    """
+    Génère et upload deux rapports Excel (avant/après insertion) pour les affectations.
+    
+    Args:
+        groupes: Liste des groupes à affecter
+        recuit_assignments: Résultats d'affectation des chauffeurs
+        chauffeurs: Liste complète des chauffeurs
+        folder_id: ID du dossier Google Drive
+        
+    Returns:
+        file_id_avant
+    """
+    # 1. Créer le rapport avant insertion (basé sur votre code existant)
+    print(f"groupes: {groupes}")
+    rows = []
+    for g in groupes:
+        row = {
+            "group_id": g['id'],
+            "N": g['ng'],
+            "pickup_date": g['pickup_date'],
+            "pickup_time": g['t'],
+            "duree_trajet_min": g['duree_trajet_min'],
+            "lieu_prise_en_charge": g.get("pickup_address", ""),
+            "destination": g.get("dropoff_address", "")
+        }
+        aff_list = assignments.get(g['id'], [])
+
+        for i in range(30):  # Support pour jusqu'à 30 chauffeurs
+            if i < len(aff_list):
+                a = aff_list[i]
+                ch = next((ch for ch in chauffeurs if ch['id'] == a["chauffeur"]), {})
+                row[f"chauffeur_{i+1}_id"] = ch.get('id', '')
+                row[f"chauffeur_{i+1}_nom_prenom"] = ch.get('prenom_nom', '')
+                row[f"chauffeur_{i+1}_trajet"] = a["trajet"]
+                row[f"chauffeur_{i+1}_n"] = ch.get('n', '')
+                row[f"chauffeur_{i+1}_combo_id"] = a.get("combo_id", '')
+                row[f"chauffeur_{i+1}_combiné_avec"] = ','.join(map(str, a.get("combiné_avec", [])))
+            else:
+                row[f"chauffeur_{i+1}_id"] = ''
+                row[f"chauffeur_{i+1}_nom_prenom"] = ''
+                row[f"chauffeur_{i+1}_trajet"] = ''
+                row[f"chauffeur_{i+1}_n"] = ''
+                row[f"chauffeur_{i+1}_combo_id"] = ''
+                row[f"chauffeur_{i+1}_combiné_avec"] = ''
+
+        rows.append(row)
+
+    df_avant = pd.DataFrame(rows)
+    
+    # Upload du fichier avant insertion
+    file_id_avant = await save_and_upload_to_drive(
+        df=df_avant,
+        folder_id=folder_id,
+        file_prefix="affectations_from_calculation",
+        subfolder_name="affectations",
+        format_excel=True,
+        index=False
+    )
+    
+    return file_id_avant
+
+
+async def generate_and_upload_affectation_reports_from_db(
+    date_begin: str,
+    date_end: str,
+    ds: PostgresDataSource,
+    folder_id: str
+) -> Tuple[str, str]:
+    """
+    Génère et upload deux rapports Excel (avant/après insertion) pour les affectations.
+    
+    Args:
+        date_begin: Date de début de la période
+        date_end: Date de fin de la période
+        ds: DataSource pour requêter la base de données
+        folder_id: ID du dossier Google Drive
+        
+    Returns:
+         file_id_apres
+    """
+    
+    # 2. Récupérer les données après insertion depuis la table chaufeuraffectation
+    query = f"""
+        SELECT 
+            ca.*
+        FROM chaufeuraffectation ca
+        WHERE ca.date_prise_en_charge BETWEEN '{date_begin}' AND '{date_end}'
+        ORDER BY ca.date_prise_en_charge, ca.groupe_id
+    """
+    affectations_db = await ds.fetch_all_dict(query)
+    df_apres = pd.DataFrame(affectations_db)
+    
+    # Upload du fichier après insertion
+    file_id_apres = await save_and_upload_to_drive(
+        df=df_apres,
+        folder_id=folder_id,
+        file_prefix="affectations_from_db",
+        subfolder_name="affectations",
+        format_excel=True,
+        index=False
+    )
+    
+    return  file_id_apres
+
+async def replace_driver_in_group(
+    ds: PostgresDataSource,
+    group_id: int,
+    old_chauffeur_id: int,
+    new_chauffeur_id: int
+) -> bool:
+    """
+    Remplace un chauffeur dans un groupe en vérifiant la capacité totale.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        group_id: ID du groupe
+        old_chauffeur_id: ID du chauffeur à remplacer
+        new_chauffeur_id: ID du nouveau chauffeur
+    
+    Returns:
+        bool: True si le remplacement a réussi, False sinon
+    """
+    try:
+        # Récupérer les détails du groupe
+        groupe = await ds.fetch_all(
+            "SELECT nombre_personne FROM courseGroupe WHERE groupe_id = %s",
+            [group_id]
+        )
+        if not groupe:
+            logger.error(f"Groupe {group_id} non trouvé")
+            return False
+
+        nombre_personnes = groupe[0]["nombre_personne"]
+
+        # Récupérer la capacité du nouveau chauffeur
+        new_chauffeur = await ds.fetch_all(
+            "SELECT nombre_place FROM chauffeur WHERE chauffeur_id = %s",
+            [new_chauffeur_id]
+        )
+        if not new_chauffeur:
+            logger.error(f"Chauffeur {new_chauffeur_id} non trouvé")
+            return False
+
+        new_capacity = new_chauffeur[0]["nombre_place"]
+
+        # Vérifier si le nouveau chauffeur a assez de places
+        if new_capacity < nombre_personnes:
+            logger.warning(
+                f"Le chauffeur {new_chauffeur_id} n'a pas assez de places "
+                f"(nécessaire: {nombre_personnes}, disponible: {new_capacity})"
+            )
+            return False
+
+        # Remplacer le chauffeur
+        await ds.execute_query(
+            """
+            UPDATE chauffeurAffectation
+            SET chauffeur_id = %s
+            WHERE groupe_id = %s AND chauffeur_id = %s
+            """,
+            [new_chauffeur_id, group_id, old_chauffeur_id]
+        )
+
+        # Mettre à jour les métadonnées
+        success = await update_driver_assignment_metadata(ds, [group_id])
+        if not success:
+            return False
+
+        logger.info(f"Chauffeur remplacé dans le groupe {group_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Erreur lors du remplacement du chauffeur: {str(e)}")
+        return False
+
+async def update_group_assignments(
+    ds: PostgresDataSource,
+    group_id: int,
+    chauffeur_ids: List[int],
+    statut_affectation: str = "confirmed"
+) -> bool:
+    """
+    Met à jour les affectations d'un groupe avec une nouvelle liste de chauffeurs.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        group_id: ID du groupe à modifier
+        chauffeur_ids: Liste des IDs des chauffeurs à affecter
+        statut_affectation: Statut des affectations (par défaut "confirmed")
+    
+    Returns:
+        bool: True si la mise à jour a réussi, False sinon
+    """
+    try:
+        # Supprimer les affectations existantes
+        await ds.execute_query(
+            "DELETE FROM chauffeurAffectation WHERE groupe_id = %s",
+            [group_id]
+        )
+
+        # Ajouter les nouvelles affectations
+        for chauffeur_id in chauffeur_ids:
+            await ds.execute_query(
+                """
+                INSERT INTO chauffeurAffectation (
+                    groupe_id, chauffeur_id, statut_affectation, date_created
+                ) VALUES (%s, %s, %s, NOW())
+                """,
+                [group_id, chauffeur_id, statut_affectation]
+            )
+
+        # Mettre à jour les métadonnées
+        success = await update_driver_assignment_metadata(ds, [group_id])
+        if not success:
+            return False
+
+        logger.info(f"Affectations mises à jour pour le groupe {group_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la mise à jour des affectations: {str(e)}")
+        return False
+
+async def update_driver_assignment_metadata(
+    ds: PostgresDataSource,
+    group_ids: List[int]
+) -> bool:
+    """
+    Met à jour les métadonnées calculées pour les affectations de chauffeurs.
+    À utiliser après toute modification des affectations.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        group_ids: Liste des IDs des groupes à mettre à jour
+    
+    Returns:
+        bool: True si la mise à jour a réussi, False sinon
+    """
+    try:
+        update_query = """
+            UPDATE chauffeurAffectation ca
+            SET 
+                nombre_personne_prise_en_charge = (
+                    SELECT cg.nombre_personne 
+                    FROM courseGroupe cg 
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                prenom_nom_chauffeur = (
+                    SELECT ch.prenom_nom 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                nombre_place_chauffeur = (
+                    SELECT ch.nombre_place 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                telephone_chauffeur = (
+                    SELECT ch.telephone 
+                    FROM chauffeur ch 
+                    WHERE ch.chauffeur_id = ca.chauffeur_id
+                ),
+                partager_avec_chauffeur_json = (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'prenom_nom', ch2.prenom_nom,
+                            'telephone', ch2.telephone,
+                            'nombre_place', ch2.nombre_place
+                        )
+                    )
+                    FROM chauffeurAffectation ca2
+                    JOIN chauffeur ch2 ON ca2.chauffeur_id = ch2.chauffeur_id
+                    WHERE ca2.groupe_id = ca.groupe_id 
+                    AND ca2.chauffeur_id != ca.chauffeur_id
+                ),
+                course_partagee = (
+                    SELECT COUNT(*) > 1
+                    FROM chauffeurAffectation ca2
+                    WHERE ca2.groupe_id = ca.groupe_id
+                ),
+                passagers_json = (
+                    SELECT jsonb_agg(
+                        DISTINCT jsonb_build_object(
+                            'prenom_nom', co.prenom_nom,
+                            'telephone', co.telephone,
+                            'num_vol', COALESCE(co.num_vol, 'N/A'),
+                            'nombre_personne', co.nombre_personne,
+                            'date_heure_prise_en_charge', co.date_heure_prise_en_charge,
+                            'lieu_prise_en_charge', co.lieu_prise_en_charge,
+                            'destination', co.destination,
+                            'telephone_hebergement', co.telephone_hebergement,
+                            'hebergeur', co.hebergeur,
+                            'lieu_prise_en_charge_court', co.lieu_prise_en_charge_court,
+                            'groupe_id', co.groupe_id
+                        )
+                    )
+                    FROM course co
+                    WHERE co.groupe_id = ca.groupe_id
+                ),
+                course_combinee = (
+                    SELECT COUNT(c.*) > 0
+                    FROM course c
+                    WHERE c.groupe_id IN (
+                        SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                    )
+                ),
+                details_course_combinee_json = (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'prenom_nom', c.prenom_nom,
+                            'telephone', c.telephone,
+                            'numero_vol', COALESCE(c.num_vol, 'N/A'),
+                            'heure_prise_en_charge', c.date_heure_prise_en_charge,
+                            'lieu_prise_en_charge', c.lieu_prise_en_charge,
+                            'destination', c.destination,
+                            'hebergeur', c.hebergeur,
+                            'telephone_hebergement', c.telephone_hebergement,
+                            'lieu_prise_en_charge_court', c.lieu_prise_en_charge_court,
+                            'groupe_id', c.groupe_id
+                        )
+                    )
+                    FROM course c
+                    WHERE c.groupe_id IN (
+                        SELECT unnest(string_to_array(ca.combiner_avec_groupe_id::TEXT, ','))::bigint
+                    )
+                ),
+                vip = (
+                    SELECT cg.vip 
+                    FROM courseGroupe cg 
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                prenom_nom_list = (
+                    SELECT string_agg(DISTINCT co.prenom_nom, ' | ')
+                    FROM course co
+                    WHERE co.groupe_id = ca.groupe_id
+                ),
+                date_heure_prise_en_charge = (
+                    SELECT cg.date_heure_prise_en_charge
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                destination = (
+                    SELECT CASE
+                        WHEN cg.destination != cg.destination_court 
+                             AND cg.destination_court IS NOT NULL
+                             AND cg.destination IS NOT NULL
+                        THEN CONCAT(cg.destination_court, '-', cg.destination)
+                        ELSE COALESCE(cg.destination_court, cg.destination)
+                    END
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                ),
+                lieu_prise_en_charge = (
+                    SELECT CASE
+                        WHEN cg.lieu_prise_en_charge != cg.lieu_prise_en_charge_court 
+                             AND cg.lieu_prise_en_charge_court IS NOT NULL
+                             AND cg.lieu_prise_en_charge IS NOT NULL
+                        THEN CONCAT(cg.lieu_prise_en_charge_court, '-', cg.lieu_prise_en_charge)
+                        ELSE COALESCE(cg.lieu_prise_en_charge_court, cg.lieu_prise_en_charge)
+                    END
+                    FROM courseGroupe cg
+                    WHERE cg.groupe_id = ca.groupe_id
+                )
+            WHERE ca.groupe_id = ANY(%(groupes_ids)s)
+        """
+        await ds.execute_transaction([(update_query, {"groupes_ids": group_ids})])
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la mise à jour des métadonnées des affectations: {str(e)}")
+        return False
+
+async def update_affectations_status(
+    ds: PostgresDataSource,
+    date_begin: Optional[str] = None,
+    date_end: Optional[str] = None,
+    group_ids: Optional[List[int]] = None,
+    chauffeur_ids: Optional[List[int]] = None,
+    old_status: str = "draft",
+    new_status: str = "pending"
+) -> bool:
+    """
+    Met à jour le statut des affectations avec contrôle de l'ancien statut.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        date_begin: Date de début (optionnelle)
+        date_end: Date de fin (optionnelle)
+        group_ids: Liste d'IDs de groupes (optionnelle)
+        chauffeur_ids: Liste d'IDs de chauffeurs (optionnelle)
+        old_status: Statut actuel à filtrer ("draft" par défaut)
+        new_status: Nouveau statut ("pending" par défaut)
+    
+    Returns:
+        bool: True si la mise à jour a réussi, False sinon
+    """
+    try:
+        # Construction dynamique de la requête
+        base_query = """
+            UPDATE chauffeurAffectation ca
+            SET 
+                statut_affectation = %(new_status)s::varchar,
+                date_pending = CASE 
+                    WHEN %(new_status)s::varchar = 'pending' THEN NOW() 
+                    ELSE date_pending 
+                END,
+                date_accepted = CASE 
+                    WHEN %(new_status)s::varchar = 'accepted' THEN NOW() 
+                    ELSE date_accepted 
+                END,
+                date_done = CASE 
+                    WHEN %(new_status)s::varchar = 'done' THEN NOW() 
+                    ELSE date_done 
+                END
+            FROM courseGroupe cg
+            WHERE ca.groupe_id = cg.groupe_id
+            AND ca.statut_affectation = %(old_status)s::varchar
+        """
+        
+        params = {
+            "new_status": new_status,
+            "old_status": old_status
+        }
+        conditions = []
+        
+        # Ajout des conditions optionnelles
+        if date_begin:
+            conditions.append("cg.date_heure_prise_en_charge >= %(date_begin)s")
+            params["date_begin"] = date_begin
+        if date_end:
+            conditions.append("cg.date_heure_prise_en_charge <= %(date_end)s")
+            params["date_end"] = date_end
+        if group_ids:
+            conditions.append("ca.groupe_id = ANY(%(group_ids)s)")
+            params["group_ids"] = group_ids
+        if chauffeur_ids:
+            conditions.append("ca.chauffeur_id = ANY(%(chauffeur_ids)s)")
+            params["chauffeur_ids"] = chauffeur_ids
+        
+        # Combinaison des conditions
+        if conditions:
+            base_query += " AND " + " AND ".join(conditions)
+        
+        # Exécution
+        result = await ds.execute_transaction([(base_query, params)])
+        logger.info(
+            f"Mise à jour statut: {old_status}→{new_status} pour "
+            f"{result.rowcount} affectations (groupes: {len(group_ids or [])}, "
+            f"chauffeurs: {len(chauffeur_ids or [])})"
+        )
+        return True
+        
+    except Exception as e:
+        logger.error(f"Échec de la mise à jour du statut {old_status}→{new_status}: {str(e)}")
+        return False
+
+async def create_chauffeur_affectation(
+    ds: PostgresDataSource,
+    group_id: int,
+    chauffeur_id: int
+) -> bool:
+    """
+    Crée une affectation de chauffeur pour un groupe de courses existant et met à jour les métadonnées.
+    
+    Args:
+        ds: Source de données PostgreSQL
+        group_id: ID du groupe de courses existant
+        chauffeur_id: ID du chauffeur à affecter
+        
+    Returns:
+        bool: True si l'opération a réussi, False sinon
+    """
+    try:
+        # 1. Vérifier que le groupe existe
+        groupe = await ds.fetch_all(
+            "SELECT groupe_id FROM courseGroupe WHERE groupe_id = %s",
+            [group_id]
+        )
+        if not groupe:
+            logger.error(f"Groupe {group_id} non trouvé")
+            return False
+
+        # 2. Vérifier que le chauffeur existe
+        chauffeur = await ds.fetch_all(
+            "SELECT chauffeur_id FROM chauffeur WHERE chauffeur_id = %s",
+            [chauffeur_id]
+        )
+        if not chauffeur:
+            logger.error(f"Chauffeur {chauffeur_id} non trouvé")
+            return False
+
+        # 3. Créer l'affectation
+        await ds.execute_query(
+            """
+            INSERT INTO chauffeurAffectation (
+                groupe_id, chauffeur_id, statut_affectation, date_created
+            ) VALUES (
+                %s, %s, 'draft', NOW()
+            )
+            """,
+            [group_id, chauffeur_id]
+        )
+
+        # 4. Mettre à jour les métadonnées
+        success = await update_driver_assignment_metadata(ds, [group_id])
+        if not success:
+            return False
+
+        logger.info(f"Affectation créée pour le groupe {group_id} et le chauffeur {chauffeur_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la création de l'affectation: {str(e)}")
+        return False
