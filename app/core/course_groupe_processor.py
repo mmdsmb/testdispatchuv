@@ -307,10 +307,18 @@ class CourseGroupeProcessor:
     async def _reset_existing_groups(self, start_date: datetime, end_date: datetime) -> None:
         """Supprime les groupes existants dans la période et réinitialise les courses"""
         # 1. Récupérer les groupes à supprimer
+        # groupes = await self.ds.fetch_all("""
+        #     SELECT groupe_id 
+        #     FROM courseGroupe 
+        #     WHERE date_heure_prise_en_charge BETWEEN %s AND %s
+        # """, (start_date, end_date))
+        
         groupes = await self.ds.fetch_all("""
-            SELECT groupe_id 
-            FROM courseGroupe 
-            WHERE date_heure_prise_en_charge BETWEEN %s AND %s
+            SELECT cg.groupe_id 
+            FROM courseGroupe cg
+            JOIN course c ON cg.groupe_id = c.groupe_id
+            WHERE cg.date_heure_prise_en_charge BETWEEN %s AND %s
+            AND c.hote_id NOT IN (16, 119, 21, 1, 6, 18, 19, 27, 120, 85, 67, 2, 37, 84, 90, 112)
         """, (start_date, end_date))
         
         # 2. Supprimer les groupes

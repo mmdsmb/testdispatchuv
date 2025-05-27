@@ -257,9 +257,10 @@ async def prepare_chauffeurs(
         FROM chauffeur c
         JOIN dispoChauffeur dc ON c.chauffeur_id = dc.chauffeur_id
         LEFT JOIN adresseGps ag ON c.hash_adresse = ag.hash_address
-        WHERE c.actif = true
+        WHERE c.actif = true and c.chauffeur_id != 220
     """
-
+    print("query", query)
+   
     params = {
         "use_salle": use_salle_address,
         "salle_lat": salle_coords["latitude"] if salle_coords else None,
@@ -281,6 +282,8 @@ async def prepare_chauffeurs(
     #print(params)
     
     rows = await ds.fetch_all(query, params)
+    
+    print("rows", rows)
     
     if not rows:
         logger.warning("Aucun chauffeur disponible pour la période spécifiée")
